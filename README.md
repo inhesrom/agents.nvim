@@ -45,6 +45,7 @@ Restart Neovim or reload your plugin manager, then run `:Agents launch`.
   the agent picker.
 - `:Agents sessions` opens the global session picker, sorted by most recent use.
 - `:Agents hide` hides the current agent float without stopping the job.
+- `:Agents send` resends the stored task prompt to the current session.
 
 ## Lua API
 
@@ -70,6 +71,13 @@ agents.setup({
       cmd = "my-agent",
       args = { "--interactive" },
       send = {
+        -- Wait for terminal output to appear and settle before pasting.
+        -- Use "delay" to preserve delay-only scheduling.
+        ready = "output-idle",
+        ready_idle_ms = 250,
+        ready_timeout_ms = 3000,
+
+        -- Applied after readiness.
         delay_ms = 80,
         bracketed_paste = true,
         submit = true,
@@ -81,6 +89,7 @@ agents.setup({
 agents.launch("codex")
 agents.sessions()
 agents.hide()
+agents.send()
 ```
 
 Default keymaps are opt-in:
@@ -103,8 +112,17 @@ Range: lines 10-20
 ```
 
 The edited prompt is pasted into the terminal PTY and submitted using generic
-terminal input. There are no provider APIs, adapters, transcript stores, or
-background services in V1.
+terminal input. By default, agents.nvim waits until the terminal has visible
+output and that output has been idle for `send.ready_idle_ms` before pasting the
+task. If no stable output appears before `send.ready_timeout_ms`, it sends
+anyway. Set `send.ready = "delay"` to use delay-only behavior.
+
+If a CLI drops early input or has unusual startup timing, `:Agents send` or
+`require("agents").send(session_or_id?)` resends the stored task prompt to the
+current or given running session.
+
+There are no provider APIs, adapters, transcript stores, or background services
+in V1.
 
 See `:help agents.nvim` and
 `docs/adr/0001-terminal-session-first.md` for more detail.

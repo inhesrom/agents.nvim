@@ -4,7 +4,7 @@ local M = {}
 
 local created = false
 
-local subcommands = { "launch", "sessions", "hide" }
+local subcommands = { "launch", "sessions", "hide", "send" }
 
 local function starts_with(value, prefix)
   return value:sub(1, #prefix) == prefix
@@ -41,6 +41,11 @@ function M.dispatch(command_opts)
 
   if subcommand == "hide" then
     agents.hide()
+    return
+  end
+
+  if subcommand == "send" then
+    agents.send()
     return
   end
 

@@ -34,6 +34,9 @@ COMMANDS                                                  *agents.nvim-commands*
 :Agents hide                                               *:Agents-hide*
         Hide the current agent float without stopping its terminal job.
 
+:Agents send                                               *:Agents-send*
+        Resend the stored task prompt to the current running Agent Session.
+
 ==============================================================================
 LUA API                                                        *agents.nvim-api*
 >
@@ -41,6 +44,7 @@ LUA API                                                        *agents.nvim-api*
   require("agents").launch(name?)
   require("agents").sessions()
   require("agents").hide()
+  require("agents").send(session_or_id?)
 <
 
 ==============================================================================
@@ -62,6 +66,9 @@ CONFIGURATION                                    *agents.nvim-configuration*
         cmd = "my-agent",
         args = { "--interactive" },
         send = {
+          ready = "output-idle",
+          ready_idle_ms = 250,
+          ready_timeout_ms = 3000,
           delay_ms = 80,
           bracketed_paste = true,
           submit = true,
@@ -77,7 +84,17 @@ No keymaps are installed by default. Set `default_keymaps = true` to map:
   `<leader>as`  open sessions
 
 Agent specs accept `cmd` or `command`, optional `args`, and optional `send`
-settings. `send.submit` may be `true`, `false`, `"enter"`, or `"newline"`.
+settings.
+
+`send.ready` controls when the task prompt is pasted into the terminal:
+
+  `"output-idle"`  wait for visible terminal output to stop changing
+  `"delay"`        preserve delay-only scheduling
+
+With `"output-idle"`, `send.ready_idle_ms` is the stable-output wait and
+`send.ready_timeout_ms` sends anyway if no stable output is detected. `delay_ms`
+is applied after readiness. `send.submit` may be `true`, `false`, `"enter"`, or
+`"newline"`.
 
 ==============================================================================
 SESSION MODEL                                      *agents.nvim-session-model*
@@ -102,6 +119,10 @@ empty, the target label is used.
 Agent terminals open in centered bordered floats. Press `q` or `<Esc>` in
 normal mode to hide the float. The terminal job keeps running. Hidden sessions
 notify when their process exits.
+
+The submitted task prompt is stored on the session. Use `:Agents send` or
+`require("agents").send(session_or_id?)` to resend it immediately if a terminal
+CLI drops startup input or needs manual retry.
 
 The session picker includes live and exited sessions. Press `<CR>` to show a
 session. Press `d` to delete an exited session immediately; deleting a live

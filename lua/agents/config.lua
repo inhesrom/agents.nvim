@@ -7,6 +7,9 @@ local defaults = {
     sessions = "<leader>as",
   },
   send = {
+    ready = "output-idle",
+    ready_idle_ms = 250,
+    ready_timeout_ms = 3000,
     delay_ms = 80,
     bracketed_paste = true,
     submit = true,

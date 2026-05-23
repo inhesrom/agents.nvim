@@ -32,6 +32,30 @@ local function temp_project()
   return root, file
 end
 
+local function write_script(lines)
+  local script = vim.fn.tempname() .. ".sh"
+  vim.fn.writefile(lines, script)
+  vim.fn.setfperm(script, "rwx------")
+  return script
+end
+
+local function basic_target()
+  return {
+    root = vim.fn.getcwd(),
+    path = "x.lua",
+    start_line = 1,
+    end_line = 1,
+  }
+end
+
+local function wait_for_file(path, timeout_ms)
+  ok(vim.wait(timeout_ms or 2000, function()
+    return vim.fn.filereadable(path) == 1
+  end), "expected file to be written: " .. path)
+
+  return table.concat(vim.fn.readfile(path), "\n")
+end
+
 test("auto-registers built-ins found on PATH", function()
   local cfg = config.resolve({}, function(cmd)
     return cmd == "codex" and 1 or 0
@@ -39,6 +63,7 @@ test("auto-registers built-ins found on PATH", function()
 
   ok(cfg.agents.codex, "codex should be registered")
   eq(cfg.agents.claude, nil, "claude should not be registered")
+  eq(cfg.agents.codex.send.ready, "output-idle")
 end)
 
 test("applies explicit agent overrides and disables", function()
@@ -58,6 +83,29 @@ test("applies explicit agent overrides and disables", function()
   eq(cfg.agents.claude, nil)
   eq(cfg.agents.custom.cmd, "custom-agent")
   eq(cfg.agents.disabled, nil)
+  eq(cfg.send.ready, "output-idle")
+  eq(cfg.send.ready_idle_ms, 250)
+  eq(cfg.send.ready_timeout_ms, 3000)
+end)
+
+test("applies top-level send readiness to built-ins", function()
+  local cfg = config.resolve({
+    send = {
+      ready = "delay",
+      ready_idle_ms = 10,
+      ready_timeout_ms = 20,
+    },
+    agents = {
+      codex = { cmd = "/tmp/codex" },
+    },
+  }, function()
+    return 0
+  end)
+
+  eq(cfg.agents.codex.send.ready, "delay")
+  eq(cfg.agents.codex.send.ready_idle_ms, 10)
+  eq(cfg.agents.codex.send.ready_timeout_ms, 20)
+  eq(cfg.agents.codex.send.delay_ms, 120)
 end)
 
 test("completes commands and launch agent names", function()
@@ -77,6 +125,7 @@ test("dispatches subcommands", function()
   local old_launch = agents.launch
   local old_sessions = agents.sessions
   local old_hide = agents.hide
+  local old_send = agents.send
 
   agents.launch = function(name, opts)
     calls[#calls + 1] = { "launch", name, opts.line1, opts.line2 }
@@ -87,20 +136,34 @@ test("dispatches subcommands", function()
   agents.hide = function()
     calls[#calls + 1] = { "hide" }
   end
+  agents.send = function()
+    calls[#calls + 1] = { "send" }
+  end
 
   commands.dispatch({ fargs = { "launch", "alpha" }, range = 2, line1 = 3, line2 = 5 })
   commands.dispatch({ fargs = { "sessions" } })
   commands.dispatch({ fargs = { "hide" } })
+  commands.dispatch({ fargs = { "send" } })
 
   agents.launch = old_launch
   agents.sessions = old_sessions
   agents.hide = old_hide
+  agents.send = old_send
 
   eq(calls, {
     { "launch", "alpha", 3, 5 },
     { "sessions" },
     { "hide" },
+    { "send" },
   })
+end)
+
+test("formats terminal task input", function()
+  eq(sessions._format_task_input_for_test("hello", {}), "\027[200~hello\027[201~\r")
+  eq(sessions._format_task_input_for_test("hello", { bracketed_paste = false }), "hello\r")
+  eq(sessions._format_task_input_for_test("hello", { bracketed_paste = false, submit = true }), "hello\r")
+  eq(sessions._format_task_input_for_test("hello", { bracketed_paste = false, submit = "newline" }), "hello\n")
+  eq(sessions._format_task_input_for_test("hello", { bracketed_paste = false, submit = false }), "hello")
 end)
 
 test("captures git root and cursor target", function()
@@ -157,6 +220,145 @@ test("orders sessions by recency and deletes exited sessions", function()
 
   ok(sessions.delete(older, { confirm = false }))
   eq(#sessions.list(), 1)
+end)
+
+test("delay readiness preserves delay-only scheduling", function()
+  sessions._reset_for_test()
+  local capture = vim.fn.tempname()
+  local script = write_script({
+    "#!/usr/bin/env bash",
+    "capture=\"$1\"",
+    "if IFS= read -r -t 1 line; then",
+    "  printf '%s\\n' \"$line\" > \"$capture\"",
+    "else",
+    "  printf '__NO_INPUT__\\n' > \"$capture\"",
+    "fi",
+  })
+
+  sessions.start({
+    name = "fake",
+    label = "fake",
+    cmd = "bash",
+    args = { script, capture },
+    send = {
+      ready = "delay",
+      delay_ms = 0,
+      bracketed_paste = false,
+      submit = true,
+    },
+  }, "delay prompt", basic_target(), "delay prompt")
+
+  eq(wait_for_file(capture, 1500), "delay prompt")
+  sessions._reset_for_test()
+end)
+
+test("output-idle readiness waits for terminal UI before sending", function()
+  sessions._reset_for_test()
+  local prompt = "ready prompt"
+  local script = write_script({
+    "#!/usr/bin/env bash",
+    "capture=\"$1\"",
+    "if IFS= read -r -t 0.2 early; then",
+    "  :",
+    "fi",
+    "printf 'READY FRAME\\n'",
+    "if IFS= read -r -t 1 line; then",
+    "  printf '%s\\n' \"$line\" > \"$capture\"",
+    "else",
+    "  printf '__NO_INPUT__\\n' > \"$capture\"",
+    "fi",
+  })
+
+  local early_capture = vim.fn.tempname()
+  sessions.start({
+    name = "fake",
+    label = "fake",
+    cmd = "bash",
+    args = { script, early_capture },
+    send = {
+      ready = "delay",
+      delay_ms = 0,
+      bracketed_paste = false,
+      submit = true,
+    },
+  }, prompt, basic_target(), prompt)
+
+  eq(wait_for_file(early_capture, 2000), "__NO_INPUT__")
+  sessions._reset_for_test()
+
+  local ready_capture = vim.fn.tempname()
+  sessions.start({
+    name = "fake",
+    label = "fake",
+    cmd = "bash",
+    args = { script, ready_capture },
+    send = {
+      ready = "output-idle",
+      ready_idle_ms = 50,
+      ready_timeout_ms = 1000,
+      delay_ms = 0,
+      bracketed_paste = false,
+      submit = true,
+    },
+  }, prompt, basic_target(), prompt)
+
+  eq(wait_for_file(ready_capture, 2000), prompt)
+  sessions._reset_for_test()
+end)
+
+test("manual send resends stored task immediately", function()
+  sessions._reset_for_test()
+  local capture = vim.fn.tempname()
+  local script = write_script({
+    "#!/usr/bin/env bash",
+    "capture=\"$1\"",
+    "if IFS= read -r -t 1 line; then",
+    "  printf '%s\\n' \"$line\" > \"$capture\"",
+    "else",
+    "  printf '__NO_INPUT__\\n' > \"$capture\"",
+    "fi",
+  })
+
+  local session = sessions.start({
+    name = "fake",
+    label = "fake",
+    cmd = "bash",
+    args = { script, capture },
+    send = {
+      ready = "delay",
+      delay_ms = 10000,
+      bracketed_paste = false,
+      submit = true,
+    },
+  }, "manual prompt", basic_target(), "manual prompt")
+
+  ok(agents.send(session.id), "manual send should succeed")
+  eq(wait_for_file(capture, 1500), "manual prompt")
+  sessions._reset_for_test()
+end)
+
+test("manual send notifies when unavailable", function()
+  sessions._reset_for_test()
+  local notifications = {}
+  local old_notify = vim.notify
+  vim.notify = function(message, level, opts)
+    notifications[#notifications + 1] = { message = message, level = level, opts = opts }
+  end
+
+  ok(not agents.send(), "send without current session should fail")
+
+  local session = sessions._record_for_test({
+    agent_name = "fake",
+    status = "running",
+    job_id = 123,
+    task_prompt = nil,
+  })
+  ok(not agents.send(session), "send without stored task should fail")
+
+  vim.notify = old_notify
+  eq(notifications[1].message, "No current agent session to send to")
+  eq(notifications[2].message, "Agent session #" .. session.id .. " has no stored task to send")
+  sessions._reset_for_test()
 end)
 
 test("opens task editor and pickers in headless Neovim", function()

@@ -113,6 +113,10 @@ function M.hide()
   end
 end
 
+function M.send(session)
+  return sessions.send(session)
+end
+
 M._config = config
 M._sessions = sessions
 M._target = target

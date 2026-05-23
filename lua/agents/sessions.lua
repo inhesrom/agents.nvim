@@ -8,9 +8,14 @@ local M = {}
 local sessions = {}
 local next_id = 1
 local uv = vim.uv or vim.loop
+local READY_POLL_MS = 50
 
 local function now()
   return uv.hrtime()
+end
+
+local function now_ms()
+  return math.floor(now() / 1000000)
 end
 
 local function touch(session)
@@ -63,28 +68,114 @@ local function attach_winclosed(session, winid)
   })
 end
 
-local function send_task(session, prompt)
+local function format_task_input(prompt, send)
+  send = send or {}
+  local text = prompt or ""
+
+  if send.bracketed_paste ~= false then
+    text = "\027[200~" .. text .. "\027[201~"
+  end
+
+  if send.submit == nil or send.submit == true or send.submit == "enter" then
+    text = text .. "\r"
+  elseif send.submit == "newline" then
+    text = text .. "\n"
+  end
+
+  return text
+end
+
+local function send_task_now(session, prompt)
+  if session.deleted or session.status ~= "running" or not session.job_id then
+    return false
+  end
+
+  local ok = pcall(vim.fn.chansend, session.job_id, format_task_input(prompt, session.agent.send))
+  if ok then
+    touch(session)
+  end
+
+  return ok
+end
+
+local function send_task_after_delay(session, prompt)
   local send = session.agent.send or {}
   local delay_ms = send.delay_ms or 0
 
   vim.defer_fn(function()
-    if session.deleted or session.status ~= "running" or not session.job_id then
+    send_task_now(session, prompt)
+  end, delay_ms)
+end
+
+local function visible_buffer_text(bufnr)
+  if not is_buf_valid(bufnr) then
+    return nil
+  end
+
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  local text = table.concat(lines, "\n")
+  if text:find("%S") then
+    return text
+  end
+
+  return nil
+end
+
+local function send_task_when_output_idle(session, prompt)
+  local send = session.agent.send or {}
+  local idle_ms = send.ready_idle_ms or 250
+  local timeout_ms = send.ready_timeout_ms or 3000
+  local started_ms = now_ms()
+  local last_text = nil
+  local last_change_ms = started_ms
+  local sent = false
+
+  local function finish()
+    if sent then
       return
     end
 
-    local text = prompt or ""
-    if send.bracketed_paste ~= false then
-      text = "\027[200~" .. text .. "\027[201~"
+    sent = true
+    send_task_after_delay(session, prompt)
+  end
+
+  local function poll()
+    if sent or session.deleted or session.status ~= "running" or not session.job_id then
+      return
     end
 
-    if send.submit == nil or send.submit == true or send.submit == "enter" then
-      text = text .. "\r"
-    elseif send.submit == "newline" then
-      text = text .. "\n"
+    local current_ms = now_ms()
+    local text = visible_buffer_text(session.bufnr)
+
+    if text then
+      if text ~= last_text then
+        last_text = text
+        last_change_ms = current_ms
+      elseif current_ms - last_change_ms >= idle_ms then
+        finish()
+        return
+      end
     end
 
-    pcall(vim.fn.chansend, session.job_id, text)
-  end, delay_ms)
+    if current_ms - started_ms >= timeout_ms then
+      finish()
+      return
+    end
+
+    vim.defer_fn(poll, READY_POLL_MS)
+  end
+
+  poll()
+end
+
+local function send_task(session, prompt)
+  local send = session.agent.send or {}
+  if send.ready == "delay" then
+    send_task_after_delay(session, prompt)
+    return
+  end
+
+  send_task_when_output_idle(session, prompt)
 end
 
 local function on_exit(session, code)
@@ -170,6 +261,7 @@ function M.start(agent, prompt, target, description)
     bufnr = bufnr,
     root = target.root,
     target = target,
+    task_prompt = prompt,
     description = description,
     status = "starting",
     created_at = now(),
@@ -218,6 +310,33 @@ function M.hide(session)
   end
 
   return true
+end
+
+function M.send(session)
+  if type(session) == "number" then
+    session = sessions[session]
+  end
+
+  if not session then
+    session = M.current()
+  end
+
+  if not session then
+    util.notify("No current agent session to send to", vim.log.levels.WARN)
+    return false
+  end
+
+  if session.task_prompt == nil then
+    util.notify(string.format("Agent session #%d has no stored task to send", session.id), vim.log.levels.WARN)
+    return false
+  end
+
+  if session.status ~= "running" or not session.job_id then
+    util.notify(string.format("Agent session #%d is not running", session.id), vim.log.levels.WARN)
+    return false
+  end
+
+  return send_task_now(session, session.task_prompt)
 end
 
 function M.current()
@@ -364,5 +483,7 @@ function M._record_for_test(fields)
   sessions[id] = session
   return session
 end
+
+M._format_task_input_for_test = format_task_input
 
 return M
