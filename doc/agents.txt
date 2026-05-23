@@ -1,0 +1,110 @@
+*agents.nvim* Launch CLI agents in floating terminal sessions
+
+==============================================================================
+CONTENTS                                                  *agents.nvim-contents*
+
+1. Overview                                      |agents.nvim-overview|
+2. Commands                                      |agents.nvim-commands|
+3. Lua API                                       |agents.nvim-api|
+4. Configuration                                 |agents.nvim-configuration|
+5. Session model                                 |agents.nvim-session-model|
+
+==============================================================================
+OVERVIEW                                                  *agents.nvim-overview*
+
+agents.nvim is a zero-config, dependency-free plugin for launching configured
+CLI agents from Neovim. Version 1 is terminal-session-first: it wraps generic
+interactive CLIs in managed floating terminal sessions.
+
+The built-in `codex` and `claude` agents are registered automatically only when
+their executables are found on PATH.
+
+Official support targets Neovim 0.12+. Neovim 0.11 is best-effort where the
+required APIs are available.
+
+==============================================================================
+COMMANDS                                                  *agents.nvim-commands*
+
+:Agents launch [name]                                      *:Agents-launch*
+        Launch a new Agent Session. Without [name], opens the agent picker.
+
+:Agents sessions                                           *:Agents-sessions*
+        Open the global session picker, sorted by most recent use.
+
+:Agents hide                                               *:Agents-hide*
+        Hide the current agent float without stopping its terminal job.
+
+==============================================================================
+LUA API                                                        *agents.nvim-api*
+>
+  require("agents").setup(opts)
+  require("agents").launch(name?)
+  require("agents").sessions()
+  require("agents").hide()
+<
+
+==============================================================================
+CONFIGURATION                                    *agents.nvim-configuration*
+>
+  require("agents").setup({
+    default_keymaps = false,
+    keymaps = {
+      launch = "<leader>aa",
+      sessions = "<leader>as",
+    },
+    agents = {
+      codex = {
+        cmd = "codex",
+        args = {},
+      },
+      claude = false,
+      custom = {
+        cmd = "my-agent",
+        args = { "--interactive" },
+        send = {
+          delay_ms = 80,
+          bracketed_paste = true,
+          submit = true,
+        },
+      },
+    },
+  })
+<
+
+No keymaps are installed by default. Set `default_keymaps = true` to map:
+
+  `<leader>aa`  launch an agent
+  `<leader>as`  open sessions
+
+Agent specs accept `cmd` or `command`, optional `args`, and optional `send`
+settings. `send.submit` may be `true`, `false`, `"enter"`, or `"newline"`.
+
+==============================================================================
+SESSION MODEL                                      *agents.nvim-session-model*
+
+Every launch creates a new Agent Session. The plugin captures the current Git
+root, falling back to Neovim's cwd, plus a project-relative file path and line
+or range.
+
+The task editor opens with:
+>
+  Task:
+
+  Context:
+  File: path/to/file.lua
+  Range: lines 10-20
+<
+
+Press `<CR>` in normal mode to submit. Press `q` or `<Esc>` to cancel. The
+first non-empty line after `Task:` becomes the session description. If it is
+empty, the target label is used.
+
+Agent terminals open in centered bordered floats. Press `q` or `<Esc>` in
+normal mode to hide the float. The terminal job keeps running. Hidden sessions
+notify when their process exits.
+
+The session picker includes live and exited sessions. Press `<CR>` to show a
+session. Press `d` to delete an exited session immediately; deleting a live
+session asks for confirmation before stopping the job.
+
+vim:tw=78:ts=8:ft=help:norl:
