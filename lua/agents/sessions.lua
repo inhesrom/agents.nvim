@@ -10,7 +10,10 @@ local next_id = 1
 local uv = vim.uv or vim.loop
 local READY_POLL_MS = 50
 local FLOAT_FOOTER = " normal: s snap  q/<Esc> hide "
+local SESSION_HINT = "normal: s snap  q/<Esc> hide"
 local SNAP_HINT = "snap: h left  j down  k up  l right  f float  q/<Esc> cancel"
+local SNAP_FOOTER = " " .. SNAP_HINT .. " "
+local HINT_NS = vim.api.nvim_create_namespace("agents_session_hint_line")
 local snap_modes = {}
 local last_editor_win
 
@@ -56,7 +59,7 @@ end
 
 local function is_session_buffer(bufnr)
   for _, session in pairs(sessions) do
-    if session.bufnr == bufnr and not session.deleted then
+    if (session.bufnr == bufnr or session.hint_bufnr == bufnr) and not session.deleted then
       return true
     end
   end
@@ -67,6 +70,182 @@ end
 local function is_floating_win(winid)
   local ok, win_config = pcall(vim.api.nvim_win_get_config, winid)
   return ok and win_config.relative ~= ""
+end
+
+local function set_session_statusline(winid, hint)
+  if not is_win_valid(winid) or is_floating_win(winid) then
+    return
+  end
+
+  pcall(vim.api.nvim_win_call, winid, function()
+    vim.wo.statusline = hint
+  end)
+end
+
+local function clear_session_statusline(winid)
+  if not is_win_valid(winid) or is_floating_win(winid) then
+    return
+  end
+
+  pcall(vim.api.nvim_win_call, winid, function()
+    vim.cmd("setlocal statusline<")
+  end)
+end
+
+local function define_highlights()
+  vim.api.nvim_set_hl(0, "AgentsSessionHint", { default = true, link = "Comment" })
+end
+
+local function close_session_hint_line(session)
+  if not session then
+    return
+  end
+
+  local winid = session.hint_winid
+  session.hint_winid = nil
+
+  if is_win_valid(winid) then
+    pcall(vim.api.nvim_win_close, winid, true)
+  end
+
+  if is_buf_valid(session.hint_bufnr) then
+    pcall(vim.api.nvim_buf_delete, session.hint_bufnr, { force = true })
+  end
+  session.hint_bufnr = nil
+end
+
+local function centered_hint_line(text, width)
+  local text_width = vim.fn.strdisplaywidth(text)
+  local padding = math.max(0, math.floor((width - text_width) / 2))
+  return string.rep(" ", padding) .. text, padding
+end
+
+local function set_hint_buffer_text(bufnr, hint, width)
+  if not is_buf_valid(bufnr) then
+    return
+  end
+
+  pcall(vim.api.nvim_set_option_value, "modifiable", true, { buf = bufnr })
+  local line, start_col = centered_hint_line(hint, width)
+  pcall(vim.api.nvim_buf_set_lines, bufnr, 0, -1, false, { line })
+  pcall(vim.api.nvim_buf_clear_namespace, bufnr, HINT_NS, 0, -1)
+  pcall(vim.api.nvim_buf_set_extmark, bufnr, HINT_NS, 0, start_col, {
+    end_col = start_col + #hint,
+    hl_group = "AgentsSessionHint",
+  })
+  pcall(vim.api.nvim_set_option_value, "modifiable", false, { buf = bufnr })
+end
+
+local function ensure_hint_buffer(session)
+  if is_buf_valid(session.hint_bufnr) then
+    return session.hint_bufnr
+  end
+
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.bo[bufnr].buftype = "nofile"
+  vim.bo[bufnr].bufhidden = "wipe"
+  vim.bo[bufnr].swapfile = false
+  session.hint_bufnr = bufnr
+  return bufnr
+end
+
+local function configure_session_hint_window(winid)
+  pcall(vim.api.nvim_win_call, winid, function()
+    vim.wo.number = false
+    vim.wo.relativenumber = false
+    vim.wo.signcolumn = "no"
+    vim.wo.foldcolumn = "0"
+    vim.wo.cursorline = false
+    vim.wo.list = false
+    vim.wo.wrap = false
+    vim.wo.statusline = ""
+    vim.wo.winbar = ""
+    vim.wo.winfixheight = true
+    vim.wo.winhl = "Normal:Normal,NormalFloat:Normal,EndOfBuffer:Normal"
+  end)
+end
+
+local function set_session_hint_line(session, hint)
+  if not session or not is_win_valid(session.winid) or is_floating_win(session.winid) then
+    close_session_hint_line(session)
+    return false
+  end
+
+  local width = math.max(1, vim.api.nvim_win_get_width(session.winid))
+  local height = math.max(1, vim.api.nvim_win_get_height(session.winid))
+  local bufnr = ensure_hint_buffer(session)
+  set_hint_buffer_text(bufnr, hint, width)
+
+  local footer_config = {
+    relative = "win",
+    win = session.winid,
+    row = height - 1,
+    col = 0,
+    width = width,
+    height = 1,
+    focusable = false,
+    style = "minimal",
+    border = "none",
+    zindex = 60,
+  }
+
+  if is_win_valid(session.hint_winid) then
+    local ok = pcall(vim.api.nvim_win_set_config, session.hint_winid, footer_config)
+    if ok then
+      return true
+    end
+    close_session_hint_line(session)
+  end
+
+  local ok, winid = pcall(vim.api.nvim_open_win, bufnr, false, footer_config)
+  if not ok then
+    close_session_hint_line(session)
+    return false
+  end
+
+  session.hint_winid = winid
+  configure_session_hint_window(winid)
+  return true
+end
+
+local function set_float_footer(winid, hint)
+  if not is_win_valid(winid) or not is_floating_win(winid) then
+    return
+  end
+
+  local ok, win_config = pcall(vim.api.nvim_win_get_config, winid)
+  if not ok then
+    return
+  end
+
+  win_config.footer = hint == SNAP_HINT and SNAP_FOOTER or FLOAT_FOOTER
+  win_config.footer_pos = "center"
+  pcall(vim.api.nvim_win_set_config, winid, win_config)
+end
+
+local function set_session_hint(session, hint)
+  if not session then
+    return
+  end
+
+  if is_floating_win(session.winid) then
+    close_session_hint_line(session)
+    set_float_footer(session.winid, hint)
+    return
+  end
+
+  clear_session_statusline(session.winid)
+  if not set_session_hint_line(session, hint) then
+    set_session_statusline(session.winid, hint)
+  end
+end
+
+local function refresh_visible_session_hints()
+  for _, session in pairs(sessions) do
+    if is_visible(session) then
+      set_session_hint(session, snap_modes[session.id] and SNAP_HINT or SESSION_HINT)
+    end
+  end
 end
 
 local function is_editor_win(winid)
@@ -141,10 +320,6 @@ local function remove_snap_choice_maps(session)
   end
 end
 
-local function echo_snap_hint()
-  pcall(vim.api.nvim_echo, { { SNAP_HINT, "ModeMsg" } }, false, {})
-end
-
 exit_snap_mode = function(session)
   if not session then
     return
@@ -156,6 +331,8 @@ exit_snap_mode = function(session)
     remove_snap_choice_maps(session)
     install_hide_maps(session)
   end
+
+  set_session_hint(session, SESSION_HINT)
 end
 
 enter_snap_mode = function(session)
@@ -187,7 +364,7 @@ enter_snap_mode = function(session)
     exit_snap_mode(session)
   end, "Cancel agent snap")
 
-  echo_snap_hint()
+  set_session_hint(session, SNAP_HINT)
   return true
 end
 
@@ -197,6 +374,7 @@ local function attach_winclosed(session, winid)
     once = true,
     callback = function()
       if session.winid == winid then
+        close_session_hint_line(session)
         session.winid = nil
         touch(session)
       end
@@ -344,6 +522,8 @@ local function replace_session_window_with_anchor(session, winid)
     return false
   end
 
+  clear_session_statusline(winid)
+
   local bufnr = vim.api.nvim_create_buf(false, true)
   vim.bo[bufnr].bufhidden = "wipe"
   vim.bo[bufnr].swapfile = false
@@ -366,6 +546,9 @@ local function close_session_window(session)
     return true
   end
 
+  close_session_hint_line(session)
+  clear_session_statusline(winid)
+
   session.winid = nil
   local ok = pcall(vim.api.nvim_win_close, winid, true)
   if not ok and is_win_valid(winid) then
@@ -374,6 +557,7 @@ local function close_session_window(session)
     end
 
     session.winid = winid
+    set_session_hint(session, snap_modes[session.id] and SNAP_HINT or SESSION_HINT)
     return false
   end
 
@@ -451,6 +635,7 @@ local function open_window(session, opts)
   opts = opts or {}
 
   if is_visible(session) and not opts.force_reopen then
+    set_session_hint(session, snap_modes[session.id] and SNAP_HINT or SESSION_HINT)
     vim.api.nvim_set_current_win(session.winid)
     touch(session)
     return session.winid
@@ -477,6 +662,7 @@ local function open_window(session, opts)
 
   session.winid = winid
   attach_winclosed(session, winid)
+  set_session_hint(session, snap_modes[session.id] and SNAP_HINT or SESSION_HINT)
   touch(session)
   return winid
 end
@@ -506,6 +692,19 @@ vim.api.nvim_create_autocmd("WinEnter", {
   end,
 })
 remember_editor_win(vim.api.nvim_get_current_win())
+
+local chrome_group = vim.api.nvim_create_augroup("agents_session_chrome", { clear = true })
+define_highlights()
+vim.api.nvim_create_autocmd("ColorScheme", {
+  group = chrome_group,
+  desc = "Define Agent Session hint highlights",
+  callback = define_highlights,
+})
+vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {
+  group = chrome_group,
+  desc = "Keep Agent Session Hint Lines anchored to their session windows",
+  callback = refresh_visible_session_hints,
+})
 
 local function start_job(session, prompt)
   vim.api.nvim_set_current_win(session.winid)
@@ -683,7 +882,7 @@ function M.delete(session, opts)
   end
 
   if is_visible(session) then
-    pcall(vim.api.nvim_win_close, session.winid, true)
+    close_session_window(session)
   end
 
   if is_buf_valid(session.bufnr) then
@@ -742,7 +941,7 @@ function M._reset_for_test()
       pcall(vim.fn.jobstop, session.job_id)
     end
     if is_visible(session) then
-      pcall(vim.api.nvim_win_close, session.winid, true)
+      close_session_window(session)
     end
     if is_buf_valid(session.bufnr) then
       pcall(vim.api.nvim_buf_delete, session.bufnr, { force = true })

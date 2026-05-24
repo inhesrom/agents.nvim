@@ -40,7 +40,7 @@ function M.centered_float_config(opts)
     config.title_pos = opts.title_pos or "center"
   end
 
-  if opts.footer and vim.fn.has("nvim-0.12") == 1 then
+  if opts.footer then
     config.footer = opts.footer
     config.footer_pos = opts.footer_pos or "center"
   end

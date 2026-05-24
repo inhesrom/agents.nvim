@@ -6,6 +6,11 @@ local sessions = require("agents.sessions")
 local commands = require("agents.commands")
 local util = require("agents.util")
 
+local FLOAT_FOOTER = " normal: s snap  q/<Esc> hide "
+local SESSION_HINT = "normal: s snap  q/<Esc> hide"
+local SNAP_HINT = "snap: h left  j down  k up  l right  f float  q/<Esc> cancel"
+local SNAP_FOOTER = " " .. SNAP_HINT .. " "
+
 local tests = {}
 
 local function eq(actual, expected, message)
@@ -80,6 +85,122 @@ local function is_float(winid)
   return win_config.relative ~= ""
 end
 
+local function window_statusline(winid)
+  return vim.api.nvim_get_option_value("statusline", { win = winid, scope = "local" })
+end
+
+local function footer_text(footer)
+  if type(footer) == "string" then
+    return footer
+  end
+
+  if type(footer) ~= "table" then
+    return nil
+  end
+
+  if type(footer[1]) == "string" then
+    return footer[1]
+  end
+
+  if type(footer[1]) == "table" then
+    return footer[1][1]
+  end
+
+  return nil
+end
+
+local function float_footer(winid)
+  return footer_text(vim.api.nvim_win_get_config(winid).footer)
+end
+
+local function has_float_footer_api()
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  local ok_open, winid = pcall(vim.api.nvim_open_win, bufnr, false, {
+    relative = "editor",
+    width = 20,
+    height = 5,
+    row = 0,
+    col = 0,
+    style = "minimal",
+    footer = " footer ",
+  })
+
+  local supported = ok_open and footer_text(vim.api.nvim_win_get_config(winid).footer) == " footer "
+  if ok_open then
+    pcall(vim.api.nvim_win_close, winid, true)
+  end
+  pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+  return supported
+end
+
+local function assert_float_footer(winid, expected)
+  if has_float_footer_api() then
+    eq(float_footer(winid), expected)
+  end
+end
+
+local function assert_no_session_hint_statusline(winid)
+  local value = window_statusline(winid)
+  ok(value ~= SESSION_HINT, "window should not use the normal session hint statusline")
+  ok(value ~= SNAP_HINT, "window should not use the snap-mode session hint statusline")
+end
+
+local function centered_hint_line(text, width)
+  local text_width = vim.fn.strdisplaywidth(text)
+  local padding = math.max(0, math.floor((width - text_width) / 2))
+  return string.rep(" ", padding) .. text, padding
+end
+
+local function session_hint_line_text(session)
+  if not session or not vim.api.nvim_win_is_valid(session.hint_winid or -1) then
+    return nil
+  end
+
+  local bufnr = vim.api.nvim_win_get_buf(session.hint_winid)
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)
+  return lines[1] or ""
+end
+
+local function assert_session_hint_line(session, expected)
+  ok(vim.api.nvim_win_is_valid(session.hint_winid or -1), "session should have a Session Hint Line window")
+  ok(is_float(session.hint_winid), "Session Hint Line should be an attached floating window")
+  local win_config = vim.api.nvim_win_get_config(session.hint_winid)
+  eq(win_config.relative, "win")
+  eq(win_config.win, session.winid)
+  eq(win_config.border, "none")
+  eq(win_config.focusable, false)
+
+  local width = vim.api.nvim_win_get_width(session.winid)
+  local expected_line, hint_start_col = centered_hint_line(expected, width)
+  eq(session_hint_line_text(session), expected_line)
+  eq(util.trim(expected_line), expected)
+
+  local winhl = vim.api.nvim_get_option_value("winhighlight", { win = session.hint_winid, scope = "local" })
+  ok(not winhl:find("StatusLine", 1, true), "Session Hint Line should not map its background to StatusLine")
+  ok(winhl:find("Normal:Normal", 1, true), "Session Hint Line should map Normal to the pane background")
+  ok(winhl:find("NormalFloat:Normal", 1, true), "Session Hint Line should map NormalFloat to the pane background")
+  ok(winhl:find("EndOfBuffer:Normal", 1, true), "Session Hint Line should map EndOfBuffer to the pane background")
+
+  local bufnr = vim.api.nvim_win_get_buf(session.hint_winid)
+  local ns = vim.api.nvim_get_namespaces().agents_session_hint_line
+  ok(ns, "Session Hint Line namespace should exist")
+  local marks = vim.api.nvim_buf_get_extmarks(bufnr, ns, 0, -1, { details = true })
+  eq(#marks, 1)
+  eq(marks[1][2], 0)
+  eq(marks[1][3], hint_start_col)
+  eq(marks[1][4].end_col, hint_start_col + #expected)
+  eq(marks[1][4].hl_group, "AgentsSessionHint")
+end
+
+local function assert_no_session_hint_line(session, winid)
+  if winid then
+    ok(not vim.api.nvim_win_is_valid(winid), "old Session Hint Line window should be closed")
+  end
+  if session and session.hint_winid then
+    ok(not vim.api.nvim_win_is_valid(session.hint_winid), "session should not keep a Session Hint Line window")
+  end
+end
+
 local function feed_normal(keys)
   local leave_terminal = vim.api.nvim_replace_termcodes("<C-\\><C-n>", true, false, true)
   vim.api.nvim_feedkeys(leave_terminal, "nx", false)
@@ -105,6 +226,8 @@ local function assert_split_direction(session, editor_win, direction)
   ok(vim.api.nvim_win_is_valid(editor_win), "editor anchor should be valid")
   ok(not is_float(session.winid), "session should be in a real split")
   eq(vim.api.nvim_win_get_buf(session.winid), session.bufnr)
+  assert_no_session_hint_statusline(session.winid)
+  assert_session_hint_line(session, SESSION_HINT)
 
   local session_pos = vim.api.nvim_win_get_position(session.winid)
   local editor_pos = vim.api.nvim_win_get_position(editor_win)
@@ -472,6 +595,34 @@ test("snaps from float to each split direction without replacing buffer or job",
   sessions._reset_for_test()
 end)
 
+test("new centered session floats show the normal hint footer when supported", function()
+  local session = start_sleep_session()
+
+  ok(is_float(session.winid), "session should open as a centered float")
+  assert_float_footer(session.winid, FLOAT_FOOTER)
+
+  sessions._reset_for_test()
+end)
+
+test("snap mode updates centered float footers when supported", function()
+  local session = start_sleep_session()
+
+  vim.api.nvim_set_current_win(session.winid)
+  ok(sessions._enter_snap_mode_for_test(session), "snap mode should start")
+  assert_float_footer(session.winid, SNAP_FOOTER)
+
+  feed_normal("q")
+  ok(not sessions._snap_mode_active_for_test(session), "snap mode should exit")
+  assert_float_footer(session.winid, FLOAT_FOOTER)
+
+  sessions._reset_for_test()
+end)
+
+test("defines the default Session Hint Line highlight", function()
+  local highlight = vim.api.nvim_get_hl(0, { name = "AgentsSessionHint", link = true })
+  eq(highlight.link, "Comment")
+end)
+
 test("snap mode f restores a centered float", function()
   local session = start_sleep_session()
   ok(sessions._snap_for_test(session, "left"))
@@ -480,10 +631,15 @@ test("snap mode f restores a centered float", function()
   vim.api.nvim_set_current_win(session.winid)
   feed_normal("s")
   ok(sessions._snap_mode_active_for_test(session), "snap mode should be active")
+  assert_no_session_hint_statusline(session.winid)
+  assert_session_hint_line(session, SNAP_HINT)
+  local session_hint_win = session.hint_winid
   feed_normal("f")
 
   ok(is_float(session.winid), "session should return to a float")
   eq(session.placement, { kind = "float" })
+  assert_no_session_hint_line(session, session_hint_win)
+  assert_float_footer(session.winid, FLOAT_FOOTER)
 
   local win_config = vim.api.nvim_win_get_config(session.winid)
   local ui = config.get().ui
@@ -496,6 +652,72 @@ test("snap mode f restores a centered float", function()
   eq(win_config.col, expected.col)
 
   sessions._reset_for_test()
+end)
+
+test("entering snap mode does not echo the snap hint", function()
+  local session = start_sleep_session()
+  ok(sessions._snap_for_test(session, "left"))
+
+  local old_echo = vim.api.nvim_echo
+  local echoes = {}
+  local success, err = pcall(function()
+    vim.api.nvim_echo = function(chunks, history, opts)
+      echoes[#echoes + 1] = { chunks = chunks, history = history, opts = opts }
+    end
+
+    ok(sessions._enter_snap_mode_for_test(session), "snap mode should start")
+  end)
+
+  vim.api.nvim_echo = old_echo
+  if not success then
+    error(err, 0)
+  end
+
+  eq(#echoes, 0)
+  assert_no_session_hint_statusline(session.winid)
+  assert_session_hint_line(session, SNAP_HINT)
+
+  sessions._reset_for_test()
+end)
+
+test("snapped Session Hint Line remains visible when statuslines are disabled", function()
+  local old_laststatus = vim.o.laststatus
+  vim.o.laststatus = 0
+  local success, err = pcall(function()
+    local session, editor_win = start_sleep_session()
+
+    ok(sessions._snap_for_test(session, "right"))
+    assert_split_direction(session, editor_win, "right")
+
+    sessions._reset_for_test()
+  end)
+  vim.o.laststatus = old_laststatus
+  if not success then
+    error(err, 0)
+  end
+end)
+
+test("snapped Session Hint Line ignores global winborder", function()
+  local ok_winborder, old_winborder = pcall(function()
+    return vim.o.winborder
+  end)
+  if not ok_winborder then
+    return
+  end
+
+  vim.o.winborder = "rounded"
+  local success, err = pcall(function()
+    local session = start_sleep_session()
+
+    ok(sessions._snap_for_test(session, "right"))
+    assert_session_hint_line(session, SESSION_HINT)
+
+    sessions._reset_for_test()
+  end)
+  vim.o.winborder = old_winborder
+  if not success then
+    error(err, 0)
+  end
 end)
 
 test("hide and show restore remembered split placement", function()
@@ -523,14 +745,20 @@ test("floating a snapped session works when it is the only normal window", funct
   local job_id = session.job_id
 
   ok(sessions._snap_for_test(session, "left"))
+  local split_win = session.winid
+  local session_hint_win = session.hint_winid
   vim.api.nvim_set_current_win(session.winid)
   vim.cmd("silent! only")
 
   ok(sessions._snap_for_test(session, "float"))
+  ok(vim.api.nvim_win_is_valid(split_win), "old split window should be reused as an anchor")
+  assert_no_session_hint_line(session, session_hint_win)
+  assert_no_session_hint_statusline(split_win)
   ok(is_float(session.winid), "session should restore to a float")
   eq(session.placement, { kind = "float" })
   eq(session.bufnr, bufnr)
   eq(session.job_id, job_id)
+  assert_float_footer(session.winid, FLOAT_FOOTER)
 
   sessions._reset_for_test()
 end)
@@ -575,15 +803,20 @@ end)
 
 test("snap-mode cancel leaves placement unchanged", function()
   local session = start_sleep_session()
+  ok(sessions._snap_for_test(session, "left"))
   local placement = vim.deepcopy(session.placement)
 
   vim.api.nvim_set_current_win(session.winid)
   ok(sessions._enter_snap_mode_for_test(session), "snap mode should start")
+  assert_no_session_hint_statusline(session.winid)
+  assert_session_hint_line(session, SNAP_HINT)
   feed_normal("q")
 
   eq(session.placement, placement)
   ok(vim.api.nvim_win_is_valid(session.winid), "cancel should not hide the session")
   ok(not sessions._snap_mode_active_for_test(session), "snap mode should exit")
+  assert_no_session_hint_statusline(session.winid)
+  assert_session_hint_line(session, SESSION_HINT)
 
   sessions._reset_for_test()
 end)
@@ -594,10 +827,12 @@ test("opens task editor and pickers in headless Neovim", function()
     on_submit = function() end,
   })
   ok(vim.api.nvim_win_is_valid(editor.winid))
+  assert_no_session_hint_statusline(editor.winid)
   editor.cancel()
 
   local picker = sessions.open_picker()
   ok(vim.api.nvim_win_is_valid(picker.winid))
+  assert_no_session_hint_statusline(picker.winid)
   picker.close()
 end)
 

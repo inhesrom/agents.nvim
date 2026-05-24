@@ -139,7 +139,10 @@ normal mode to enter snap mode, then press `h`, `l`, `j`, or `k` to move the sam
 session buffer into a real split on the left, right, bottom, or top of the last
 focused editor window. Press `f` in snap mode to restore a centered float, or
 `q`/`<Esc>` to cancel snap mode. Outside snap mode, `q`/`<Esc>` hides the current
-session window while keeping the terminal job alive.
+session window while keeping the terminal job alive. Centered floats show keybind
+hints in their native float footer; snapped splits show a centered, muted
+Session Hint Line attached to the bottom of the session pane. The snapped line
+uses the `AgentsSessionHint` highlight, linked to `Comment` by default.
 
 There are no provider APIs, adapters, transcript stores, or background services
 in V1.
