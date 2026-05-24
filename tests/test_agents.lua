@@ -6,8 +6,10 @@ local sessions = require("agents.sessions")
 local commands = require("agents.commands")
 local util = require("agents.util")
 
-local FLOAT_FOOTER = " normal: s snap  q/<Esc> hide "
-local SESSION_HINT = "normal: s snap  q/<Esc> hide"
+local FLOAT_FOOTER = " normal: i terminal  s snap  q/<Esc> hide "
+local SESSION_HINT = "normal: i terminal  s snap  q/<Esc> hide"
+local TERMINAL_HINT = "terminal: <C-\\><C-n> cursor"
+local TERMINAL_FOOTER = " " .. TERMINAL_HINT .. " "
 local SNAP_HINT = "snap: h left  j down  k up  l right  f float  q/<Esc> cancel"
 local SNAP_FOOTER = " " .. SNAP_HINT .. " "
 
@@ -142,6 +144,7 @@ end
 local function assert_no_session_hint_statusline(winid)
   local value = window_statusline(winid)
   ok(value ~= SESSION_HINT, "window should not use the normal session hint statusline")
+  ok(value ~= TERMINAL_HINT, "window should not use the terminal-mode session hint statusline")
   ok(value ~= SNAP_HINT, "window should not use the snap-mode session hint statusline")
 end
 
@@ -205,6 +208,28 @@ local function feed_normal(keys)
   local leave_terminal = vim.api.nvim_replace_termcodes("<C-\\><C-n>", true, false, true)
   vim.api.nvim_feedkeys(leave_terminal, "nx", false)
   vim.api.nvim_feedkeys(keys, "mx", false)
+end
+
+local function with_mode(mode, fn)
+  local old_get_mode = vim.api.nvim_get_mode
+  vim.api.nvim_get_mode = function()
+    local current = old_get_mode()
+    current.mode = mode
+    return current
+  end
+
+  local success, err = pcall(fn)
+  vim.api.nvim_get_mode = old_get_mode
+  if not success then
+    error(err, 0)
+  end
+end
+
+local function exec_terminal_mode_autocmd(session, event, mode)
+  vim.api.nvim_set_current_win(session.winid)
+  with_mode(mode, function()
+    vim.api.nvim_exec_autocmds(event, { buffer = session.bufnr })
+  end)
 end
 
 local function start_sleep_session()
@@ -604,6 +629,21 @@ test("new centered session floats show the normal hint footer when supported", f
   sessions._reset_for_test()
 end)
 
+test("centered session float footer tracks terminal mode when supported", function()
+  local session = start_sleep_session()
+
+  ok(is_float(session.winid), "session should open as a centered float")
+  assert_float_footer(session.winid, FLOAT_FOOTER)
+
+  exec_terminal_mode_autocmd(session, "TermEnter", "t")
+  assert_float_footer(session.winid, TERMINAL_FOOTER)
+
+  exec_terminal_mode_autocmd(session, "TermLeave", "nt")
+  assert_float_footer(session.winid, FLOAT_FOOTER)
+
+  sessions._reset_for_test()
+end)
+
 test("snap mode updates centered float footers when supported", function()
   local session = start_sleep_session()
 
@@ -718,6 +758,24 @@ test("snapped Session Hint Line ignores global winborder", function()
   if not success then
     error(err, 0)
   end
+end)
+
+test("snapped Session Hint Line tracks terminal mode", function()
+  local session = start_sleep_session()
+
+  ok(sessions._snap_for_test(session, "right"))
+  assert_no_session_hint_statusline(session.winid)
+  assert_session_hint_line(session, SESSION_HINT)
+
+  exec_terminal_mode_autocmd(session, "TermEnter", "t")
+  assert_no_session_hint_statusline(session.winid)
+  assert_session_hint_line(session, TERMINAL_HINT)
+
+  exec_terminal_mode_autocmd(session, "TermLeave", "nt")
+  assert_no_session_hint_statusline(session.winid)
+  assert_session_hint_line(session, SESSION_HINT)
+
+  sessions._reset_for_test()
 end)
 
 test("hide and show restore remembered split placement", function()

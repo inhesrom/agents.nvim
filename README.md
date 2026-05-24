@@ -134,12 +134,14 @@ If a CLI drops early input or has unusual startup timing, `:Agents send` or
 `require("agents").send(session_or_id?)` resends the stored task prompt to the
 current or given running session.
 
-Agent sessions reopen in their last placement. Press `s` in a session terminal's
-normal mode to enter snap mode, then press `h`, `l`, `j`, or `k` to move the same
-session buffer into a real split on the left, right, bottom, or top of the last
-focused editor window. Press `f` in snap mode to restore a centered float, or
-`q`/`<Esc>` to cancel snap mode. Outside snap mode, `q`/`<Esc>` hides the current
-session window while keeping the terminal job alive. Centered floats show keybind
+Agent sessions reopen in their last placement. Press `i` in a session terminal's
+normal mode to type into the terminal, or press `s` to enter snap mode. In snap
+mode, press `h`, `l`, `j`, or `k` to move the same session buffer into a real
+split on the left, right, bottom, or top of the last focused editor window.
+Press `f` in snap mode to restore a centered float, or `q`/`<Esc>` to cancel
+snap mode. Outside snap mode, `q`/`<Esc>` hides the current session window while
+keeping the terminal job alive. While typing in terminal mode, use
+`<C-\><C-n>` to return to cursor mode. Centered floats show mode-aware keybind
 hints in their native float footer; snapped splits show a centered, muted
 Session Hint Line attached to the bottom of the session pane. The snapped line
 uses the `AgentsSessionHint` highlight, linked to `Comment` by default.

@@ -129,16 +129,18 @@ Press `<CR>` in normal mode to submit. Press `q` or `<Esc>` to cancel. The
 first non-empty line after `Task:` becomes the session description. If it is
 empty, the target label is used.
 
-Agent terminals open in centered bordered floats. Press `s` in normal mode to
-enter snap mode. Then press `h`, `l`, `j`, or `k` to move the same Agent Session
-buffer into a real split on the left, right, bottom, or top of the last focused
-editor window. Press `f` in snap mode to restore a centered float, or `q`/`<Esc>`
-to cancel snap mode. Outside snap mode, press `q` or `<Esc>` in normal mode to
-hide the current session window. Centered floats show keybind hints in their
-native float footer; snapped splits show a centered, muted Session Hint Line
-attached to the bottom of the session pane. The snapped line uses the
-`AgentsSessionHint` highlight, linked to `Comment` by default. The terminal job
-keeps running. Hidden sessions notify when their process exits.
+Agent terminals open in centered bordered floats. Press `i` in normal mode to
+type into the terminal, or press `s` to enter snap mode. Then press `h`, `l`,
+`j`, or `k` to move the same Agent Session buffer into a real split on the left,
+right, bottom, or top of the last focused editor window. Press `f` in snap mode
+to restore a centered float, or `q`/`<Esc>` to cancel snap mode. Outside snap
+mode, press `q` or `<Esc>` in normal mode to hide the current session window.
+While typing in terminal mode, use `<C-\><C-n>` to return to cursor mode.
+Centered floats show mode-aware keybind hints in their native float footer;
+snapped splits show a centered, muted Session Hint Line attached to the bottom
+of the session pane. The snapped line uses the `AgentsSessionHint` highlight,
+linked to `Comment` by default. The terminal job keeps running. Hidden sessions
+notify when their process exits.
 
 The submitted task prompt is stored on the session. Use `:Agents send` or
 `require("agents").send(session_or_id?)` to resend it immediately if a terminal

@@ -9,9 +9,11 @@ local sessions = {}
 local next_id = 1
 local uv = vim.uv or vim.loop
 local READY_POLL_MS = 50
-local FLOAT_FOOTER = " normal: s snap  q/<Esc> hide "
-local SESSION_HINT = "normal: s snap  q/<Esc> hide"
+local SESSION_HINT = "normal: i terminal  s snap  q/<Esc> hide"
+local TERMINAL_HINT = "terminal: <C-\\><C-n> cursor"
 local SNAP_HINT = "snap: h left  j down  k up  l right  f float  q/<Esc> cancel"
+local FLOAT_FOOTER = " " .. SESSION_HINT .. " "
+local TERMINAL_FOOTER = " " .. TERMINAL_HINT .. " "
 local SNAP_FOOTER = " " .. SNAP_HINT .. " "
 local HINT_NS = vim.api.nvim_create_namespace("agents_session_hint_line")
 local snap_modes = {}
@@ -65,6 +67,16 @@ local function is_session_buffer(bufnr)
   end
 
   return false
+end
+
+local function session_for_buffer(bufnr)
+  for _, session in pairs(sessions) do
+    if session.bufnr == bufnr and not session.deleted then
+      return session
+    end
+  end
+
+  return nil
 end
 
 local function is_floating_win(winid)
@@ -218,9 +230,32 @@ local function set_float_footer(winid, hint)
     return
   end
 
-  win_config.footer = hint == SNAP_HINT and SNAP_FOOTER or FLOAT_FOOTER
+  if hint == SNAP_HINT then
+    win_config.footer = SNAP_FOOTER
+  elseif hint == TERMINAL_HINT then
+    win_config.footer = TERMINAL_FOOTER
+  else
+    win_config.footer = FLOAT_FOOTER
+  end
   win_config.footer_pos = "center"
   pcall(vim.api.nvim_win_set_config, winid, win_config)
+end
+
+local function visible_hint_for_session(session)
+  if not session then
+    return SESSION_HINT
+  end
+
+  if snap_modes[session.id] then
+    return SNAP_HINT
+  end
+
+  local ok, mode = pcall(vim.api.nvim_get_mode)
+  if ok and mode.mode == "t" and is_win_valid(session.winid) and vim.api.nvim_get_current_win() == session.winid then
+    return TERMINAL_HINT
+  end
+
+  return SESSION_HINT
 end
 
 local function set_session_hint(session, hint)
@@ -243,7 +278,7 @@ end
 local function refresh_visible_session_hints()
   for _, session in pairs(sessions) do
     if is_visible(session) then
-      set_session_hint(session, snap_modes[session.id] and SNAP_HINT or SESSION_HINT)
+      set_session_hint(session, visible_hint_for_session(session))
     end
   end
 end
@@ -332,7 +367,7 @@ exit_snap_mode = function(session)
     install_hide_maps(session)
   end
 
-  set_session_hint(session, SESSION_HINT)
+  set_session_hint(session, visible_hint_for_session(session))
 end
 
 enter_snap_mode = function(session)
@@ -557,7 +592,7 @@ local function close_session_window(session)
     end
 
     session.winid = winid
-    set_session_hint(session, snap_modes[session.id] and SNAP_HINT or SESSION_HINT)
+    set_session_hint(session, visible_hint_for_session(session))
     return false
   end
 
@@ -635,7 +670,7 @@ local function open_window(session, opts)
   opts = opts or {}
 
   if is_visible(session) and not opts.force_reopen then
-    set_session_hint(session, snap_modes[session.id] and SNAP_HINT or SESSION_HINT)
+    set_session_hint(session, visible_hint_for_session(session))
     vim.api.nvim_set_current_win(session.winid)
     touch(session)
     return session.winid
@@ -662,7 +697,7 @@ local function open_window(session, opts)
 
   session.winid = winid
   attach_winclosed(session, winid)
-  set_session_hint(session, snap_modes[session.id] and SNAP_HINT or SESSION_HINT)
+  set_session_hint(session, visible_hint_for_session(session))
   touch(session)
   return winid
 end
@@ -704,6 +739,16 @@ vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {
   group = chrome_group,
   desc = "Keep Agent Session Hint Lines anchored to their session windows",
   callback = refresh_visible_session_hints,
+})
+vim.api.nvim_create_autocmd({ "TermEnter", "TermLeave" }, {
+  group = chrome_group,
+  desc = "Refresh Agent Session hints when terminal mode changes",
+  callback = function(args)
+    local session = session_for_buffer(args.buf)
+    if session and is_visible(session) then
+      set_session_hint(session, visible_hint_for_session(session))
+    end
+  end,
 })
 
 local function start_job(session, prompt)
