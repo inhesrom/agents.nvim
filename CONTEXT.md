@@ -17,10 +17,13 @@ prompt, then starts the terminal job after the prompt is submitted.
 
 ## Agent Session
 
-An **Agent Session** is one managed terminal buffer, floating window state, job
+An **Agent Session** is one managed terminal buffer, window placement state, job
 handle, captured target, status, and description. Sessions are in-memory only.
-Hiding a session closes its float but keeps the terminal job alive. Exited
-sessions remain in the session picker until deleted.
+Placement can be a centered float or a real editor split. **Snap** changes a
+visible Agent Session between float and split placement without changing its
+terminal buffer or job. Hiding a session closes its current visible window but
+keeps the terminal job alive. Exited sessions remain in the session picker until
+deleted.
 
 ## Task
 

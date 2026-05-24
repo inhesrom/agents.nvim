@@ -1,6 +1,6 @@
 # agents.nvim
 
-Launch CLI coding agents from Neovim in managed floating terminal sessions.
+Launch CLI coding agents from Neovim in managed terminal sessions.
 
 `agents.nvim` is zero-config and dependency-free. If `codex` or `claude` are on
 your `PATH`, they are available automatically.
@@ -18,8 +18,8 @@ Then run:
 ```
 
 Choose an agent, edit the generated task prompt, and press `<CR>` in normal mode
-to submit it. The agent runs in a floating terminal. Closing or hiding the float
-does not stop the process.
+to submit it. The agent runs in a managed terminal window. Closing or hiding the
+window does not stop the process.
 
 ## Local install script
 
@@ -44,7 +44,7 @@ Restart Neovim or reload your plugin manager, then run `:Agents launch`.
 - `:Agents launch [name]` launches a new agent session. Without `name`, it opens
   the agent picker.
 - `:Agents sessions` opens the global session picker, sorted by most recent use.
-- `:Agents hide` hides the current agent float without stopping the job.
+- `:Agents hide` hides the current agent session window without stopping the job.
 - `:Agents send` resends the stored task prompt to the current session.
 
 ## Lua API
@@ -55,6 +55,19 @@ local agents = require("agents")
 agents.setup({
   -- Opt in; no keymaps are installed by default.
   default_keymaps = true,
+
+  ui = {
+    -- Session float size.
+    width = 0.85,
+    height = 0.85,
+
+    -- Session split size when snapping. Values below 1 are fractions of the
+    -- anchor editor window; values 1 or above are cells.
+    snap = {
+      width = 0.40,
+      height = 0.35,
+    },
+  },
 
   agents = {
     -- Override a built-in, even when it is not auto-detected.
@@ -120,6 +133,13 @@ anyway. Set `send.ready = "delay"` to use delay-only behavior.
 If a CLI drops early input or has unusual startup timing, `:Agents send` or
 `require("agents").send(session_or_id?)` resends the stored task prompt to the
 current or given running session.
+
+Agent sessions reopen in their last placement. Press `s` in a session terminal's
+normal mode to enter snap mode, then press `h`, `l`, `j`, or `k` to move the same
+session buffer into a real split on the left, right, bottom, or top of the last
+focused editor window. Press `f` in snap mode to restore a centered float, or
+`q`/`<Esc>` to cancel snap mode. Outside snap mode, `q`/`<Esc>` hides the current
+session window while keeping the terminal job alive.
 
 There are no provider APIs, adapters, transcript stores, or background services
 in V1.

@@ -4,6 +4,7 @@ local target = require("agents.target")
 local task_editor = require("agents.task_editor")
 local sessions = require("agents.sessions")
 local commands = require("agents.commands")
+local util = require("agents.util")
 
 local tests = {}
 
@@ -56,6 +57,68 @@ local function wait_for_file(path, timeout_ms)
   return table.concat(vim.fn.readfile(path), "\n")
 end
 
+local function reset_editor_window()
+  pcall(vim.cmd, "stopinsert")
+  sessions._reset_for_test()
+
+  for _, winid in ipairs(vim.api.nvim_list_wins()) do
+    local win_config = vim.api.nvim_win_get_config(winid)
+    if win_config.relative ~= "" then
+      pcall(vim.api.nvim_win_close, winid, true)
+    end
+  end
+
+  vim.cmd("silent! only")
+  vim.cmd("enew")
+  local winid = vim.api.nvim_get_current_win()
+  sessions._remember_editor_for_test(winid)
+  return winid
+end
+
+local function is_float(winid)
+  local win_config = vim.api.nvim_win_get_config(winid)
+  return win_config.relative ~= ""
+end
+
+local function feed_normal(keys)
+  local leave_terminal = vim.api.nvim_replace_termcodes("<C-\\><C-n>", true, false, true)
+  vim.api.nvim_feedkeys(leave_terminal, "nx", false)
+  vim.api.nvim_feedkeys(keys, "mx", false)
+end
+
+local function start_sleep_session()
+  local editor_win = reset_editor_window()
+  local session = sessions.start({
+    name = "sh",
+    label = "sh",
+    cmd = "sh",
+    args = { "-c", "sleep 30" },
+    send = { ready = "delay", delay_ms = 0, bracketed_paste = false, submit = false },
+  }, "", basic_target(), "snap test")
+
+  ok(session.job_id and session.job_id > 0, "session job should start")
+  return session, editor_win
+end
+
+local function assert_split_direction(session, editor_win, direction)
+  ok(vim.api.nvim_win_is_valid(session.winid), "session window should be valid")
+  ok(vim.api.nvim_win_is_valid(editor_win), "editor anchor should be valid")
+  ok(not is_float(session.winid), "session should be in a real split")
+  eq(vim.api.nvim_win_get_buf(session.winid), session.bufnr)
+
+  local session_pos = vim.api.nvim_win_get_position(session.winid)
+  local editor_pos = vim.api.nvim_win_get_position(editor_win)
+  if direction == "left" then
+    ok(session_pos[2] < editor_pos[2], "session split should be left of editor")
+  elseif direction == "right" then
+    ok(session_pos[2] > editor_pos[2], "session split should be right of editor")
+  elseif direction == "up" then
+    ok(session_pos[1] < editor_pos[1], "session split should be above editor")
+  elseif direction == "down" then
+    ok(session_pos[1] > editor_pos[1], "session split should be below editor")
+  end
+end
+
 test("auto-registers built-ins found on PATH", function()
   local cfg = config.resolve({}, function(cmd)
     return cmd == "codex" and 1 or 0
@@ -86,6 +149,29 @@ test("applies explicit agent overrides and disables", function()
   eq(cfg.send.ready, "output-idle")
   eq(cfg.send.ready_idle_ms, 250)
   eq(cfg.send.ready_timeout_ms, 3000)
+end)
+
+test("applies default and overridden snap config", function()
+  local cfg = config.resolve({}, function()
+    return 0
+  end)
+
+  eq(cfg.ui.snap.width, 0.40)
+  eq(cfg.ui.snap.height, 0.35)
+
+  cfg = config.resolve({
+    ui = {
+      snap = {
+        width = 48,
+        height = 12,
+      },
+    },
+  }, function()
+    return 0
+  end)
+
+  eq(cfg.ui.snap.width, 48)
+  eq(cfg.ui.snap.height, 12)
 end)
 
 test("applies top-level send readiness to built-ins", function()
@@ -358,6 +444,147 @@ test("manual send notifies when unavailable", function()
   vim.notify = old_notify
   eq(notifications[1].message, "No current agent session to send to")
   eq(notifications[2].message, "Agent session #" .. session.id .. " has no stored task to send")
+  sessions._reset_for_test()
+end)
+
+test("snaps from float to each split direction without replacing buffer or job", function()
+  local session, editor_win = start_sleep_session()
+  local bufnr = session.bufnr
+  local job_id = session.job_id
+
+  local cases = {
+    { direction = "left" },
+    { direction = "right" },
+    { direction = "down" },
+    { direction = "up" },
+  }
+
+  for _, case in ipairs(cases) do
+    ok(sessions._snap_for_test(session, "float"), "float restore should succeed")
+    ok(is_float(session.winid), "session should be floating before split snap")
+    ok(sessions._snap_for_test(session, case.direction), "split snap should succeed")
+    eq(session.bufnr, bufnr)
+    eq(session.job_id, job_id)
+    eq(session.placement, { kind = "split", direction = case.direction })
+    assert_split_direction(session, editor_win, case.direction)
+  end
+
+  sessions._reset_for_test()
+end)
+
+test("snap mode f restores a centered float", function()
+  local session = start_sleep_session()
+  ok(sessions._snap_for_test(session, "left"))
+  ok(not is_float(session.winid), "session should start snapped")
+
+  vim.api.nvim_set_current_win(session.winid)
+  feed_normal("s")
+  ok(sessions._snap_mode_active_for_test(session), "snap mode should be active")
+  feed_normal("f")
+
+  ok(is_float(session.winid), "session should return to a float")
+  eq(session.placement, { kind = "float" })
+
+  local win_config = vim.api.nvim_win_get_config(session.winid)
+  local ui = config.get().ui
+  local expected = util.centered_float_config({
+    width = ui.width,
+    height = ui.height,
+    border = ui.border,
+  })
+  eq(win_config.row, expected.row)
+  eq(win_config.col, expected.col)
+
+  sessions._reset_for_test()
+end)
+
+test("hide and show restore remembered split placement", function()
+  local session, editor_win = start_sleep_session()
+  local bufnr = session.bufnr
+  local job_id = session.job_id
+
+  ok(sessions._snap_for_test(session, "right"))
+  assert_split_direction(session, editor_win, "right")
+  ok(sessions.hide(session), "hide should close the visible split")
+  eq(session.winid, nil)
+
+  ok(sessions.show(session), "show should restore the session")
+  eq(session.bufnr, bufnr)
+  eq(session.job_id, job_id)
+  eq(session.placement, { kind = "split", direction = "right" })
+  assert_split_direction(session, editor_win, "right")
+
+  sessions._reset_for_test()
+end)
+
+test("floating a snapped session works when it is the only normal window", function()
+  local session = start_sleep_session()
+  local bufnr = session.bufnr
+  local job_id = session.job_id
+
+  ok(sessions._snap_for_test(session, "left"))
+  vim.api.nvim_set_current_win(session.winid)
+  vim.cmd("silent! only")
+
+  ok(sessions._snap_for_test(session, "float"))
+  ok(is_float(session.winid), "session should restore to a float")
+  eq(session.placement, { kind = "float" })
+  eq(session.bufnr, bufnr)
+  eq(session.job_id, job_id)
+
+  sessions._reset_for_test()
+end)
+
+test("exited sessions can be snapped", function()
+  local editor_win = reset_editor_window()
+  local session = sessions.start({
+    name = "sh",
+    label = "sh",
+    cmd = "sh",
+    args = { "-c", "exit 0" },
+    send = { ready = "delay", delay_ms = 0, bracketed_paste = false, submit = false },
+  }, "", basic_target(), "exited snap")
+
+  ok(vim.wait(1000, function()
+    return session.status == "exited"
+  end), "session should exit")
+
+  ok(sessions._snap_for_test(session, "down"))
+  eq(session.status, "exited")
+  assert_split_direction(session, editor_win, "down")
+
+  sessions._reset_for_test()
+end)
+
+test("picker buffers do not receive snap mappings", function()
+  reset_editor_window()
+  local picker = sessions.open_picker()
+  local maps = vim.api.nvim_buf_get_keymap(picker.bufnr, "n")
+
+  for _, map in ipairs(maps) do
+    ok(map.lhs ~= "s", "picker should not map snap entry")
+    ok(map.lhs ~= "h", "picker should not map snap left")
+    ok(map.lhs ~= "j", "picker should not map snap down")
+    ok(map.lhs ~= "k", "picker should not map snap up")
+    ok(map.lhs ~= "l", "picker should not map snap right")
+    ok(map.lhs ~= "f", "picker should not map float snap")
+  end
+
+  picker.close()
+end)
+
+test("snap-mode cancel leaves placement unchanged", function()
+  local session = start_sleep_session()
+  local placement = vim.deepcopy(session.placement)
+
+  vim.api.nvim_set_current_win(session.winid)
+  ok(sessions._enter_snap_mode_for_test(session), "snap mode should start")
+  feed_normal("q")
+
+  eq(session.placement, placement)
+  ok(vim.api.nvim_win_is_valid(session.winid), "cancel should not hide the session")
+  ok(not sessions._snap_mode_active_for_test(session), "snap mode should exit")
+
   sessions._reset_for_test()
 end)
 

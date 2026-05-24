@@ -18,6 +18,10 @@ local defaults = {
     width = 0.85,
     height = 0.85,
     border = "rounded",
+    snap = {
+      width = 0.40,
+      height = 0.35,
+    },
   },
   task_editor = {
     width = 0.70,

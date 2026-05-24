@@ -1,4 +1,4 @@
-*agents.nvim* Launch CLI agents in floating terminal sessions
+*agents.nvim* Launch CLI agents in managed terminal sessions
 
 ==============================================================================
 CONTENTS                                                  *agents.nvim-contents*
@@ -14,7 +14,7 @@ OVERVIEW                                                  *agents.nvim-overview*
 
 agents.nvim is a zero-config, dependency-free plugin for launching configured
 CLI agents from Neovim. Version 1 is terminal-session-first: it wraps generic
-interactive CLIs in managed floating terminal sessions.
+interactive CLIs in managed terminal sessions.
 
 The built-in `codex` and `claude` agents are registered automatically only when
 their executables are found on PATH.
@@ -32,7 +32,7 @@ COMMANDS                                                  *agents.nvim-commands*
         Open the global session picker, sorted by most recent use.
 
 :Agents hide                                               *:Agents-hide*
-        Hide the current agent float without stopping its terminal job.
+        Hide the current Agent Session window without stopping its terminal job.
 
 :Agents send                                               *:Agents-send*
         Resend the stored task prompt to the current running Agent Session.
@@ -55,6 +55,14 @@ CONFIGURATION                                    *agents.nvim-configuration*
     keymaps = {
       launch = "<leader>aa",
       sessions = "<leader>as",
+    },
+    ui = {
+      width = 0.85,
+      height = 0.85,
+      snap = {
+        width = 0.40,
+        height = 0.35,
+      },
     },
     agents = {
       codex = {
@@ -86,6 +94,11 @@ No keymaps are installed by default. Set `default_keymaps = true` to map:
 Agent specs accept `cmd` or `command`, optional `args`, and optional `send`
 settings.
 
+`ui.width` and `ui.height` control the centered Agent Session float. `ui.snap`
+controls real split size when snapping: `width` applies to left/right splits and
+`height` applies to top/bottom splits. Values below 1 are fractions of the anchor
+editor window; values 1 or above are cells.
+
 `send.ready` controls when the task prompt is pasted into the terminal:
 
   `"output-idle"`  wait for visible terminal output to stop changing
@@ -116,8 +129,12 @@ Press `<CR>` in normal mode to submit. Press `q` or `<Esc>` to cancel. The
 first non-empty line after `Task:` becomes the session description. If it is
 empty, the target label is used.
 
-Agent terminals open in centered bordered floats. Press `q` or `<Esc>` in
-normal mode to hide the float. The terminal job keeps running. Hidden sessions
+Agent terminals open in centered bordered floats. Press `s` in normal mode to
+enter snap mode. Then press `h`, `l`, `j`, or `k` to move the same Agent Session
+buffer into a real split on the left, right, bottom, or top of the last focused
+editor window. Press `f` in snap mode to restore a centered float, or `q`/`<Esc>`
+to cancel snap mode. Outside snap mode, press `q` or `<Esc>` in normal mode to
+hide the current session window. The terminal job keeps running. Hidden sessions
 notify when their process exits.
 
 The submitted task prompt is stored on the session. Use `:Agents send` or
