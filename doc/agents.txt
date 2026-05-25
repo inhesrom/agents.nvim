@@ -118,16 +118,15 @@ or range.
 
 The task editor opens with:
 >
-  Task:
-
-  Context:
   File: path/to/file.lua
   Range: lines 10-20
+  Task:
 <
 
-Press `<CR>` in normal mode to submit. Press `q` or `<Esc>` to cancel. The
-first non-empty line after `Task:` becomes the session description. If it is
-empty, the target label is used.
+The cursor starts after `Task:`, so typing begins inline; press Enter to make
+the task multiline. Press `<CR>` in normal mode to submit. Press `q` or `<Esc>`
+to cancel. The first non-empty line after `Task:` becomes the session
+description. If it is empty, the target label is used.
 
 Agent terminals open in centered bordered floats. Press `i` in normal mode to
 type into the terminal, or press `s` to enter snap mode. Then press `h`, `l`,

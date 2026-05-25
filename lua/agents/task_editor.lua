@@ -14,12 +14,21 @@ end
 
 function M.skeleton(target)
   return table.concat({
-    "Task:",
-    "",
-    "Context:",
     "File: " .. (target.path or "[No Name]"),
     "Range: " .. target_mod.range_label(target),
+    "Task: ",
   }, "\n")
+end
+
+local function initial_cursor(lines)
+  for index = #lines, 1, -1 do
+    local _, task_end = lines[index]:find("^%s*Task:")
+    if task_end then
+      return { index, task_end }
+    end
+  end
+
+  return { #lines, 0 }
 end
 
 function M.description_from_prompt(prompt, target)
@@ -105,7 +114,7 @@ function M.open(opts)
   util.set_normal_keymap(bufnr, "q", cancel, "Cancel agent task")
   util.set_normal_keymap(bufnr, "<Esc>", cancel, "Cancel agent task")
 
-  vim.api.nvim_win_set_cursor(winid, { 2, 0 })
+  vim.api.nvim_win_set_cursor(winid, initial_cursor(lines))
 
   return {
     bufnr = bufnr,

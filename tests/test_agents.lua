@@ -431,13 +431,13 @@ test("builds task skeleton and extracts description", function()
   }
 
   eq(task_editor.skeleton(captured), table.concat({
-    "Task:",
-    "",
-    "Context:",
     "File: lua/example.lua",
     "Range: lines 10-20",
+    "Task: ",
   }, "\n"))
 
+  eq(task_editor.description_from_prompt("File: x\nRange: line 1\nTask: Fix the parser", captured), "Fix the parser")
+  eq(task_editor.description_from_prompt("File: x\nRange: line 1\nTask:\nFix the parser", captured), "Fix the parser")
   eq(task_editor.description_from_prompt("Task:\nFix the parser\n\nContext:\nFile: x", captured), "Fix the parser")
   eq(task_editor.description_from_prompt("Task:\n\nContext:\nFile: x", captured), "lua/example.lua:lines 10-20")
 end)
@@ -886,6 +886,7 @@ test("opens task editor and pickers in headless Neovim", function()
   })
   ok(vim.api.nvim_win_is_valid(editor.winid))
   assert_no_session_hint_statusline(editor.winid)
+  eq(vim.api.nvim_win_get_cursor(editor.winid), { 3, 5 })
   editor.cancel()
 
   local picker = sessions.open_picker()
@@ -911,8 +912,9 @@ test("agent picker preserves the invoking target", function()
   agent_picker.select()
 
   local lines = vim.api.nvim_buf_get_lines(vim.api.nvim_get_current_buf(), 0, -1, false)
-  eq(lines[4], "File: lua/example.lua")
-  eq(lines[5], "Range: line 4")
+  eq(lines[1], "File: lua/example.lua")
+  eq(lines[2], "Range: line 4")
+  eq(lines[3], "Task: ")
   vim.api.nvim_win_close(vim.api.nvim_get_current_win(), true)
 end)
 

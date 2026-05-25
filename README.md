@@ -117,12 +117,13 @@ current project root, file path, and cursor line or command range, then opens an
 editable task prompt:
 
 ```text
-Task:
-
-Context:
 File: path/to/file.lua
 Range: lines 10-20
+Task:
 ```
+
+The cursor starts after `Task:`, so typing begins inline; press Enter to make
+the task multiline.
 
 The edited prompt is pasted into the terminal PTY and submitted using generic
 terminal input. By default, agents.nvim waits until the terminal has visible
