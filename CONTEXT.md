@@ -28,9 +28,8 @@ deleted.
 ## Session Hint Line
 
 A **Session Hint Line** is the compact, mode-aware keybinding hint shown on a
-visible Agent Session. It may render as a float footer, a snapped overlay line,
-or a statusline fallback, but user-facing language should not call it a status
-bar.
+visible Agent Session. It may render as a float footer or in the snapped session
+winbar, but user-facing language should not call it a status bar.
 
 ## Task
 

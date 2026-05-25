@@ -136,10 +136,10 @@ to restore a centered float, or `q`/`<Esc>` to cancel snap mode. Outside snap
 mode, press `q` or `<Esc>` in normal mode to hide the current session window.
 While typing in terminal mode, use `Ctrl+\ then Ctrl+N` (`<C-\><C-n>`) to
 return to cursor mode. Centered floats show mode-aware keybind hints in their
-native float footer; snapped splits show a centered, muted Session Hint Line
-attached to the bottom of the session pane. The snapped line uses the
-`AgentsSessionHint` highlight, linked to `Comment` by default. The terminal job
-keeps running. Hidden sessions notify when their process exits.
+native float footer; snapped splits show a centered, muted Session Hint Line in
+the snapped session winbar. The snapped line uses the `AgentsSessionHint`
+highlight, linked to `Comment` by default. The terminal job keeps running.
+Hidden sessions notify when their process exits.
 
 The submitted task prompt is stored on the session. Use `:Agents send` or
 `require("agents").send(session_or_id?)` to resend it immediately if a terminal

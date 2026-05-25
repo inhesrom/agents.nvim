@@ -144,9 +144,8 @@ snap mode. Outside snap mode, `q`/`<Esc>` hides the current session window while
 keeping the terminal job alive. While typing in terminal mode, use
 `Ctrl+\ then Ctrl+N` (`<C-\><C-n>`) to return to cursor mode. Centered floats
 show mode-aware keybind hints in their native float footer; snapped splits show
-a centered, muted Session Hint Line attached to the bottom of the session pane.
-The snapped line uses the `AgentsSessionHint` highlight, linked to `Comment` by
-default.
+a centered, muted Session Hint Line in the snapped session winbar. The snapped
+line uses the `AgentsSessionHint` highlight, linked to `Comment` by default.
 
 There are no provider APIs, adapters, transcript stores, or background services
 in V1.

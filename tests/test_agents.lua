@@ -91,6 +91,14 @@ local function window_statusline(winid)
   return vim.api.nvim_get_option_value("statusline", { win = winid, scope = "local" })
 end
 
+local function window_winbar(winid)
+  return vim.api.nvim_get_option_value("winbar", { win = winid, scope = "local" })
+end
+
+local function session_hint_winbar(hint)
+  return "%#AgentsSessionHint#%=" .. tostring(hint):gsub("%%", "%%%%") .. "%="
+end
+
 local function footer_text(footer)
   if type(footer) == "string" then
     return footer
@@ -148,60 +156,30 @@ local function assert_no_session_hint_statusline(winid)
   ok(value ~= SNAP_HINT, "window should not use the snap-mode session hint statusline")
 end
 
-local function centered_hint_line(text, width)
-  local text_width = vim.fn.strdisplaywidth(text)
-  local padding = math.max(0, math.floor((width - text_width) / 2))
-  return string.rep(" ", padding) .. text, padding
-end
-
-local function session_hint_line_text(session)
-  if not session or not vim.api.nvim_win_is_valid(session.hint_winid or -1) then
-    return nil
-  end
-
-  local bufnr = vim.api.nvim_win_get_buf(session.hint_winid)
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)
-  return lines[1] or ""
-end
-
-local function assert_session_hint_line(session, expected)
-  ok(vim.api.nvim_win_is_valid(session.hint_winid or -1), "session should have a Session Hint Line window")
-  ok(is_float(session.hint_winid), "Session Hint Line should be an attached floating window")
-  local win_config = vim.api.nvim_win_get_config(session.hint_winid)
-  eq(win_config.relative, "win")
-  eq(win_config.win, session.winid)
-  eq(win_config.border, "none")
-  eq(win_config.focusable, false)
-
-  local width = vim.api.nvim_win_get_width(session.winid)
-  local expected_line, hint_start_col = centered_hint_line(expected, width)
-  eq(session_hint_line_text(session), expected_line)
-  eq(util.trim(expected_line), expected)
-
-  local winhl = vim.api.nvim_get_option_value("winhighlight", { win = session.hint_winid, scope = "local" })
-  ok(not winhl:find("StatusLine", 1, true), "Session Hint Line should not map its background to StatusLine")
-  ok(winhl:find("Normal:Normal", 1, true), "Session Hint Line should map Normal to the pane background")
-  ok(winhl:find("NormalFloat:Normal", 1, true), "Session Hint Line should map NormalFloat to the pane background")
-  ok(winhl:find("EndOfBuffer:Normal", 1, true), "Session Hint Line should map EndOfBuffer to the pane background")
-
-  local bufnr = vim.api.nvim_win_get_buf(session.hint_winid)
-  local ns = vim.api.nvim_get_namespaces().agents_session_hint_line
-  ok(ns, "Session Hint Line namespace should exist")
-  local marks = vim.api.nvim_buf_get_extmarks(bufnr, ns, 0, -1, { details = true })
-  eq(#marks, 1)
-  eq(marks[1][2], 0)
-  eq(marks[1][3], hint_start_col)
-  eq(marks[1][4].end_col, hint_start_col + #expected)
-  eq(marks[1][4].hl_group, "AgentsSessionHint")
+local function assert_no_session_hint_winbar(winid)
+  local value = window_winbar(winid)
+  ok(value ~= session_hint_winbar(SESSION_HINT), "window should not use the normal session hint winbar")
+  ok(value ~= session_hint_winbar(TERMINAL_HINT), "window should not use the terminal-mode session hint winbar")
+  ok(value ~= session_hint_winbar(SNAP_HINT), "window should not use the snap-mode session hint winbar")
+  ok(not value:find(SESSION_HINT, 1, true), "window winbar should not contain the normal session hint")
+  ok(not value:find(TERMINAL_HINT, 1, true), "window winbar should not contain the terminal-mode session hint")
+  ok(not value:find(SNAP_HINT, 1, true), "window winbar should not contain the snap-mode session hint")
 end
 
 local function assert_no_session_hint_line(session, winid)
   if winid then
     ok(not vim.api.nvim_win_is_valid(winid), "old Session Hint Line window should be closed")
   end
-  if session and session.hint_winid then
-    ok(not vim.api.nvim_win_is_valid(session.hint_winid), "session should not keep a Session Hint Line window")
+  if session then
+    eq(session.hint_winid, nil, "session should not keep a Session Hint Line window")
+    eq(session.hint_bufnr, nil, "session should not keep a Session Hint Line buffer")
   end
+end
+
+local function assert_session_hint_winbar(session, expected)
+  assert_no_session_hint_statusline(session.winid)
+  assert_no_session_hint_line(session)
+  eq(window_winbar(session.winid), session_hint_winbar(expected))
 end
 
 local function feed_normal(keys)
@@ -252,7 +230,7 @@ local function assert_split_direction(session, editor_win, direction)
   ok(not is_float(session.winid), "session should be in a real split")
   eq(vim.api.nvim_win_get_buf(session.winid), session.bufnr)
   assert_no_session_hint_statusline(session.winid)
-  assert_session_hint_line(session, SESSION_HINT)
+  assert_session_hint_winbar(session, SESSION_HINT)
 
   local session_pos = vim.api.nvim_win_get_position(session.winid)
   local editor_pos = vim.api.nvim_win_get_position(editor_win)
@@ -672,7 +650,7 @@ test("snap mode f restores a centered float", function()
   feed_normal("s")
   ok(sessions._snap_mode_active_for_test(session), "snap mode should be active")
   assert_no_session_hint_statusline(session.winid)
-  assert_session_hint_line(session, SNAP_HINT)
+  assert_session_hint_winbar(session, SNAP_HINT)
   local session_hint_win = session.hint_winid
   feed_normal("f")
 
@@ -715,7 +693,7 @@ test("entering snap mode does not echo the snap hint", function()
 
   eq(#echoes, 0)
   assert_no_session_hint_statusline(session.winid)
-  assert_session_hint_line(session, SNAP_HINT)
+  assert_session_hint_winbar(session, SNAP_HINT)
 
   sessions._reset_for_test()
 end)
@@ -750,7 +728,7 @@ test("snapped Session Hint Line ignores global winborder", function()
     local session = start_sleep_session()
 
     ok(sessions._snap_for_test(session, "right"))
-    assert_session_hint_line(session, SESSION_HINT)
+    assert_session_hint_winbar(session, SESSION_HINT)
 
     sessions._reset_for_test()
   end)
@@ -765,15 +743,15 @@ test("snapped Session Hint Line tracks terminal mode", function()
 
   ok(sessions._snap_for_test(session, "right"))
   assert_no_session_hint_statusline(session.winid)
-  assert_session_hint_line(session, SESSION_HINT)
+  assert_session_hint_winbar(session, SESSION_HINT)
 
   exec_terminal_mode_autocmd(session, "TermEnter", "t")
   assert_no_session_hint_statusline(session.winid)
-  assert_session_hint_line(session, TERMINAL_HINT)
+  assert_session_hint_winbar(session, TERMINAL_HINT)
 
   exec_terminal_mode_autocmd(session, "TermLeave", "nt")
   assert_no_session_hint_statusline(session.winid)
-  assert_session_hint_line(session, SESSION_HINT)
+  assert_session_hint_winbar(session, SESSION_HINT)
 
   sessions._reset_for_test()
 end)
@@ -812,6 +790,7 @@ test("floating a snapped session works when it is the only normal window", funct
   ok(vim.api.nvim_win_is_valid(split_win), "old split window should be reused as an anchor")
   assert_no_session_hint_line(session, session_hint_win)
   assert_no_session_hint_statusline(split_win)
+  assert_no_session_hint_winbar(split_win)
   ok(is_float(session.winid), "session should restore to a float")
   eq(session.placement, { kind = "float" })
   eq(session.bufnr, bufnr)
@@ -867,14 +846,14 @@ test("snap-mode cancel leaves placement unchanged", function()
   vim.api.nvim_set_current_win(session.winid)
   ok(sessions._enter_snap_mode_for_test(session), "snap mode should start")
   assert_no_session_hint_statusline(session.winid)
-  assert_session_hint_line(session, SNAP_HINT)
+  assert_session_hint_winbar(session, SNAP_HINT)
   feed_normal("q")
 
   eq(session.placement, placement)
   ok(vim.api.nvim_win_is_valid(session.winid), "cancel should not hide the session")
   ok(not sessions._snap_mode_active_for_test(session), "snap mode should exit")
   assert_no_session_hint_statusline(session.winid)
-  assert_session_hint_line(session, SESSION_HINT)
+  assert_session_hint_winbar(session, SESSION_HINT)
 
   sessions._reset_for_test()
 end)
