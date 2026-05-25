@@ -25,6 +25,13 @@ terminal buffer or job. Hiding a session closes its current visible window but
 keeps the terminal job alive. Exited sessions remain in the session picker until
 deleted.
 
+## Session Hint Line
+
+A **Session Hint Line** is the compact, mode-aware keybinding hint shown on a
+visible Agent Session. It may render as a float footer, a snapped overlay line,
+or a statusline fallback, but user-facing language should not call it a status
+bar.
+
 ## Task
 
 A **Task** is the prompt text submitted to the agent terminal. V1 pre-fills a
