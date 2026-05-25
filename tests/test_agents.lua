@@ -6,11 +6,11 @@ local sessions = require("agents.sessions")
 local commands = require("agents.commands")
 local util = require("agents.util")
 
-local FLOAT_FOOTER = " normal: i terminal  s snap  q/<Esc> hide "
-local SESSION_HINT = "normal: i terminal  s snap  q/<Esc> hide"
-local TERMINAL_HINT = "terminal: <C-\\><C-n> cursor"
+local FLOAT_FOOTER = " NORMAL  [i] terminal  [s] snap  [q/Esc] hide "
+local SESSION_HINT = "NORMAL  [i] terminal  [s] snap  [q/Esc] hide"
+local TERMINAL_HINT = "TERMINAL  [Ctrl+\\ then Ctrl+N] cursor"
 local TERMINAL_FOOTER = " " .. TERMINAL_HINT .. " "
-local SNAP_HINT = "snap: h left  j down  k up  l right  f float  q/<Esc> cancel"
+local SNAP_HINT = "SNAP  [h/j/k/l] move  [f] float  [q/Esc] cancel"
 local SNAP_FOOTER = " " .. SNAP_HINT .. " "
 
 local tests = {}

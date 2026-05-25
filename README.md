@@ -141,10 +141,11 @@ split on the left, right, bottom, or top of the last focused editor window.
 Press `f` in snap mode to restore a centered float, or `q`/`<Esc>` to cancel
 snap mode. Outside snap mode, `q`/`<Esc>` hides the current session window while
 keeping the terminal job alive. While typing in terminal mode, use
-`<C-\><C-n>` to return to cursor mode. Centered floats show mode-aware keybind
-hints in their native float footer; snapped splits show a centered, muted
-Session Hint Line attached to the bottom of the session pane. The snapped line
-uses the `AgentsSessionHint` highlight, linked to `Comment` by default.
+`Ctrl+\ then Ctrl+N` (`<C-\><C-n>`) to return to cursor mode. Centered floats
+show mode-aware keybind hints in their native float footer; snapped splits show
+a centered, muted Session Hint Line attached to the bottom of the session pane.
+The snapped line uses the `AgentsSessionHint` highlight, linked to `Comment` by
+default.
 
 There are no provider APIs, adapters, transcript stores, or background services
 in V1.
