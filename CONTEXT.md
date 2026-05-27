@@ -15,6 +15,13 @@ A **Launch** is the user action that creates a new Agent Session. Launching
 starts with an agent choice, captures the current target, opens the editable task
 prompt, then starts the terminal job after the prompt is submitted.
 
+## Launch Command
+
+A **Launch Command** is a saved full CLI command row in the launch picker. It is
+not a configured **Agent**: it persists only the command string, appears below
+configured Agent rows, and can launch an Agent Session by either inheriting a
+matching Agent's terminal settings or falling back to global send defaults.
+
 ## Agent Session
 
 An **Agent Session** is one managed terminal buffer, window placement state, job

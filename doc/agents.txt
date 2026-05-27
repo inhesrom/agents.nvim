@@ -116,6 +116,19 @@ Every launch creates a new Agent Session. The plugin captures the current Git
 root, falling back to Neovim's cwd, plus a project-relative file path and line
 or range.
 
+When launching without an agent name, the agent picker opens. Configured Agents
+appear first. Press `i`, edit the selected CLI command, then leave insert mode
+and press `<CR>` to launch a one-shot command. On configured Agent rows, if the
+edited row contains only flags, those flags are appended to the selected Agent's
+configured command for that run.
+
+Press `o` in the picker to add a saved Launch Command row. Saved Launch Commands
+are full, nonblank CLI commands stored globally under Neovim's data directory.
+They appear below configured Agents in saved order. Press `t` to smoke-test the
+selected row without opening an Agent Session or submitting a Task. Press `d` to
+delete a saved Launch Command row; configured Agent rows are not deleted from the
+picker.
+
 The task editor opens with:
 >
   File: path/to/file.lua

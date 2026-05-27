@@ -21,6 +21,13 @@ Choose an agent, edit the generated task prompt, and press `<CR>` in normal mode
 to submit it. The agent runs in a managed terminal window. Closing or hiding the
 window does not stop the process.
 
+In the agent picker, configured Agents appear first. Press `i` to edit the
+selected CLI command for a one-shot launch; on configured Agent rows, replacing
+the row with flags only, such as `--model gpt-5`, appends those flags to that
+Agent's configured command for that run. Press `o` to add a saved Launch Command
+row, `t` to smoke-test the selected command without opening a session, or `d` to
+delete a saved Launch Command row.
+
 ## Local install script
 
 For copy-based local testing with lazy.nvim:

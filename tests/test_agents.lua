@@ -5,6 +5,7 @@ local task_editor = require("agents.task_editor")
 local sessions = require("agents.sessions")
 local commands = require("agents.commands")
 local util = require("agents.util")
+local launch_commands = require("agents.launch_commands")
 
 local FLOAT_FOOTER = " NORMAL  [i] terminal  [s] snap  [q/Esc] hide "
 local SESSION_HINT = "NORMAL  [i] terminal  [s] snap  [q/Esc] hide"
@@ -62,6 +63,54 @@ local function wait_for_file(path, timeout_ms)
   end), "expected file to be written: " .. path)
 
   return table.concat(vim.fn.readfile(path), "\n")
+end
+
+local function read_json_file(path)
+  if vim.fn.filereadable(path) == 0 then
+    return nil
+  end
+
+  return vim.json.decode(table.concat(vim.fn.readfile(path), "\n"))
+end
+
+local function with_launch_command_store(initial_commands, fn)
+  local path = vim.fn.tempname()
+  if initial_commands then
+    vim.fn.writefile({ vim.json.encode(initial_commands) }, path)
+  end
+
+  launch_commands._set_path_for_test(path)
+  local success, err = pcall(fn, path)
+  launch_commands._reset_for_test()
+  pcall(vim.fn.delete, path)
+
+  if not success then
+    error(err, 0)
+  end
+end
+
+local function set_picker_line_and_leave_insert(active_picker, line, text)
+  vim.bo[active_picker.bufnr].modifiable = true
+  vim.api.nvim_buf_set_lines(active_picker.bufnr, line - 1, line, false, { text })
+  vim.api.nvim_set_current_win(active_picker.winid)
+  vim.api.nvim_win_set_cursor(active_picker.winid, { line, 0 })
+  vim.api.nvim_exec_autocmds("InsertLeave", { buffer = active_picker.bufnr })
+end
+
+local function capture_notifications(fn)
+  local notifications = {}
+  local old_notify = vim.notify
+  vim.notify = function(message, level, opts)
+    notifications[#notifications + 1] = { message = message, level = level, opts = opts }
+  end
+
+  local success, err = pcall(fn, notifications)
+  vim.notify = old_notify
+  if not success then
+    error(err, 0)
+  end
+
+  return notifications
 end
 
 local function reset_editor_window()
@@ -875,26 +924,430 @@ test("opens task editor and pickers in headless Neovim", function()
 end)
 
 test("agent picker preserves the invoking target", function()
-  sessions._reset_for_test()
-  agents.setup({
-    agents = {
-      ztest = { cmd = "sh" },
-    },
-  })
+  with_launch_command_store(nil, function()
+    sessions._reset_for_test()
+    agents.setup({
+      agents = {
+        ztest = { cmd = "sh" },
+      },
+    })
 
-  local _, file = temp_project()
-  vim.cmd.edit(file)
-  vim.api.nvim_win_set_cursor(0, { 4, 0 })
+    local _, file = temp_project()
+    vim.cmd.edit(file)
+    vim.api.nvim_win_set_cursor(0, { 4, 0 })
 
-  local agent_picker = agents.launch()
-  ok(agent_picker and vim.api.nvim_win_is_valid(agent_picker.winid))
-  agent_picker.select()
+    local agent_picker = agents.launch()
+    ok(agent_picker and vim.api.nvim_win_is_valid(agent_picker.winid))
+    agent_picker.select()
 
-  local lines = vim.api.nvim_buf_get_lines(vim.api.nvim_get_current_buf(), 0, -1, false)
-  eq(lines[1], "File: lua/example.lua")
-  eq(lines[2], "Range: line 4")
-  eq(lines[3], "Task: ")
-  vim.api.nvim_win_close(vim.api.nvim_get_current_win(), true)
+    local lines = vim.api.nvim_buf_get_lines(vim.api.nvim_get_current_buf(), 0, -1, false)
+    eq(lines[1], "File: lua/example.lua")
+    eq(lines[2], "Range: line 4")
+    eq(lines[3], "Task: ")
+    vim.api.nvim_win_close(vim.api.nvim_get_current_win(), true)
+  end)
+end)
+
+test("agent picker can edit a one-shot startup command", function()
+  with_launch_command_store(nil, function()
+    sessions._reset_for_test()
+    agents.setup({
+      agents = {
+        alpha = { cmd = "alpha", args = { "--base" } },
+        beta = { cmd = "beta" },
+      },
+    })
+
+    local started = {}
+    local old_task_open = task_editor.open
+    local old_sessions_start = sessions.start
+
+    task_editor.open = function(opts)
+      opts.on_submit("Task: edited")
+      return { bufnr = 0, winid = 0 }
+    end
+
+    sessions.start = function(agent)
+      started[#started + 1] = agent
+    end
+
+    local function restore()
+      task_editor.open = old_task_open
+      sessions.start = old_sessions_start
+    end
+
+    local success, err = pcall(function()
+      local agent_picker = agents.launch(nil, { target = basic_target() })
+      ok(agent_picker and vim.api.nvim_win_is_valid(agent_picker.winid))
+      assert_float_footer(
+        agent_picker.winid,
+        " <CR> launch  i edit CLI cmd  o add CLI cmd  t test  d delete  q/<Esc> close "
+      )
+      local lines = vim.api.nvim_buf_get_lines(agent_picker.bufnr, 0, 2, false)
+      eq(lines[1], "alpha --base")
+      eq(lines[2], "beta")
+      local maps = vim.api.nvim_buf_get_keymap(agent_picker.bufnr, "n")
+      local has_edit_map = false
+      for _, map in ipairs(maps) do
+        if map.lhs == "i" then
+          has_edit_map = true
+        end
+      end
+      ok(has_edit_map, "agent picker should map i to edit the startup command")
+
+      vim.api.nvim_set_current_win(agent_picker.winid)
+      vim.api.nvim_exec_autocmds("InsertEnter", { buffer = agent_picker.bufnr })
+      assert_float_footer(agent_picker.winid, " INSERT edit CLI cmd  <Esc> normal ")
+      vim.api.nvim_exec_autocmds("InsertLeave", { buffer = agent_picker.bufnr })
+      assert_float_footer(
+        agent_picker.winid,
+        " <CR> launch  i edit CLI cmd  o add CLI cmd  t test  d delete  q/<Esc> close "
+      )
+
+      agent_picker.select()
+
+      eq(started[1].name, "alpha")
+      eq(started[1].cmd, "alpha")
+      eq(started[1].args, { "--base" })
+
+      agent_picker = agents.launch(nil, { target = basic_target() })
+      vim.bo[agent_picker.bufnr].modifiable = true
+      vim.api.nvim_buf_set_lines(agent_picker.bufnr, 0, 1, false, { 'beta --model "gpt 5"' })
+      vim.bo[agent_picker.bufnr].modifiable = false
+      agent_picker.select()
+
+      eq(started[2].name, "alpha")
+      eq(started[2].cmd, "beta")
+      eq(started[2].args, { "--model", "gpt 5" })
+
+      agent_picker = agents.launch(nil, { target = basic_target() })
+      vim.bo[agent_picker.bufnr].modifiable = true
+      vim.api.nvim_buf_set_lines(agent_picker.bufnr, 0, 1, false, { "--extra" })
+      vim.bo[agent_picker.bufnr].modifiable = false
+      agent_picker.select()
+
+      eq(started[3].name, "alpha")
+      eq(started[3].cmd, "alpha")
+      eq(started[3].args, { "--base", "--extra" })
+    end)
+
+    restore()
+    if not success then
+      error(err, 0)
+    end
+
+    sessions._reset_for_test()
+  end)
+end)
+
+test("launch picker persists added Launch Commands and reloads them", function()
+  with_launch_command_store(nil, function(path)
+    agents.setup({
+      agents = {
+        alpha = { cmd = "alpha" },
+        beta = { cmd = "beta" },
+        claude = false,
+        codex = false,
+      },
+    })
+
+    local active_picker = agents.launch(nil, { target = basic_target() })
+    ok(active_picker and vim.api.nvim_win_is_valid(active_picker.winid))
+
+    local maps = vim.api.nvim_buf_get_keymap(active_picker.bufnr, "n")
+    local mapped = {}
+    for _, map in ipairs(maps) do
+      mapped[map.lhs] = true
+    end
+    ok(mapped.o, "launch picker should map o to add a Launch Command")
+    ok(mapped.t, "launch picker should map t to smoke-test a row")
+    ok(mapped.d, "launch picker should map d to delete Launch Commands")
+
+    active_picker.add()
+    local lines = vim.api.nvim_buf_get_lines(active_picker.bufnr, 0, -1, false)
+    eq(lines[1], "alpha")
+    eq(lines[2], "beta")
+    eq(lines[3], "")
+
+    set_picker_line_and_leave_insert(active_picker, 3, "sh -c 'exit 0'")
+    eq(read_json_file(path), { "sh -c 'exit 0'" })
+    active_picker.close()
+
+    active_picker = agents.launch(nil, { target = basic_target() })
+    lines = vim.api.nvim_buf_get_lines(active_picker.bufnr, 0, -1, false)
+    eq(lines[1], "alpha")
+    eq(lines[2], "beta")
+    eq(lines[3], "sh -c 'exit 0'")
+    active_picker.close()
+  end)
+end)
+
+test("blank and unparsable Launch Command edits are not persisted", function()
+  with_launch_command_store(nil, function(path)
+    agents.setup({
+      agents = {
+        alpha = { cmd = "alpha" },
+        claude = false,
+        codex = false,
+      },
+    })
+
+    local active_picker = agents.launch(nil, { target = basic_target() })
+    active_picker.add()
+    set_picker_line_and_leave_insert(active_picker, 2, "")
+    local lines = vim.api.nvim_buf_get_lines(active_picker.bufnr, 0, -1, false)
+    eq(lines, { "alpha" })
+    eq(read_json_file(path), nil)
+
+    active_picker.add()
+    local notifications = capture_notifications(function()
+      set_picker_line_and_leave_insert(active_picker, 2, 'sh -c "unterminated')
+    end)
+
+    lines = vim.api.nvim_buf_get_lines(active_picker.bufnr, 0, -1, false)
+    eq(lines, { "alpha", 'sh -c "unterminated' })
+    eq(read_json_file(path), nil)
+    eq(notifications[1].message, "Unclosed quote in agent command")
+    active_picker.close()
+  end)
+end)
+
+test("malformed Launch Command storage notifies and continues empty", function()
+  with_launch_command_store(nil, function(path)
+    vim.fn.writefile({ "{not json" }, path)
+    agents.setup({
+      agents = {
+        alpha = { cmd = "alpha" },
+        claude = false,
+        codex = false,
+      },
+    })
+
+    local active_picker
+    local notifications = capture_notifications(function()
+      active_picker = agents.launch(nil, { target = basic_target() })
+    end)
+
+    local lines = vim.api.nvim_buf_get_lines(active_picker.bufnr, 0, -1, false)
+    eq(lines, { "alpha" })
+    ok(notifications[1].message:find("Could not parse Launch Commands", 1, true))
+    active_picker.close()
+  end)
+end)
+
+test("Launch Commands delete and storage normalization keep only unique non-agent commands", function()
+  with_launch_command_store({ "alpha --base", "sh -c 'exit 0'", "sh -c 'exit 0'" }, function(path)
+    agents.setup({
+      agents = {
+        alpha = { cmd = "alpha", args = { "--base" } },
+        claude = false,
+        codex = false,
+      },
+    })
+
+    local active_picker = agents.launch(nil, { target = basic_target() })
+    local lines = vim.api.nvim_buf_get_lines(active_picker.bufnr, 0, -1, false)
+    eq(lines, { "alpha --base", "sh -c 'exit 0'" })
+    eq(read_json_file(path), { "sh -c 'exit 0'" })
+
+    vim.api.nvim_set_current_win(active_picker.winid)
+    vim.api.nvim_win_set_cursor(active_picker.winid, { 1, 0 })
+    ok(not active_picker.delete(), "configured Agent rows should not be deletable")
+    lines = vim.api.nvim_buf_get_lines(active_picker.bufnr, 0, -1, false)
+    eq(lines, { "alpha --base", "sh -c 'exit 0'" })
+
+    vim.api.nvim_win_set_cursor(active_picker.winid, { 2, 0 })
+    ok(active_picker.delete(), "Launch Command rows should delete immediately")
+    lines = vim.api.nvim_buf_get_lines(active_picker.bufnr, 0, -1, false)
+    eq(lines, { "alpha --base" })
+    eq(read_json_file(path), {})
+    active_picker.close()
+  end)
+end)
+
+test("saved Launch Commands launch full commands and inherit matching Agent settings", function()
+  with_launch_command_store({ 'alpha --child "two words"', 'tool --flag "quoted value"' }, function()
+    sessions._reset_for_test()
+    agents.setup({
+      send = {
+        ready = "delay",
+        delay_ms = 7,
+        bracketed_paste = false,
+        submit = false,
+      },
+      agents = {
+        alpha = {
+          cmd = "alpha",
+          args = { "--base" },
+          cwd = "/tmp/alpha-root",
+          env = { ALPHA = "1" },
+          send = {
+            delay_ms = 42,
+            submit = true,
+          },
+        },
+        claude = false,
+        codex = false,
+      },
+    })
+
+    local started = {}
+    local old_task_open = task_editor.open
+    local old_sessions_start = sessions.start
+
+    task_editor.open = function(opts)
+      opts.on_submit("Task: saved")
+      return { bufnr = 0, winid = 0 }
+    end
+    sessions.start = function(agent)
+      started[#started + 1] = agent
+    end
+
+    local function restore()
+      task_editor.open = old_task_open
+      sessions.start = old_sessions_start
+    end
+
+    local success, err = pcall(function()
+      local active_picker = agents.launch(nil, { target = basic_target() })
+      vim.api.nvim_set_current_win(active_picker.winid)
+      vim.api.nvim_win_set_cursor(active_picker.winid, { 2, 0 })
+      active_picker.select()
+
+      eq(started[1].name, "alpha")
+      eq(started[1].cmd, "alpha")
+      eq(started[1].args, { "--child", "two words" })
+      eq(started[1].cwd, "/tmp/alpha-root")
+      eq(started[1].env, { ALPHA = "1" })
+      eq(started[1].send.delay_ms, 42)
+      eq(started[1].send.submit, true)
+
+      active_picker = agents.launch(nil, { target = basic_target() })
+      vim.api.nvim_set_current_win(active_picker.winid)
+      vim.api.nvim_win_set_cursor(active_picker.winid, { 3, 0 })
+      active_picker.select()
+
+      eq(started[2].name, "tool")
+      eq(started[2].cmd, "tool")
+      eq(started[2].args, { "--flag", "quoted value" })
+      eq(started[2].send.delay_ms, 7)
+      eq(started[2].send.submit, false)
+    end)
+
+    restore()
+    if not success then
+      error(err, 0)
+    end
+
+    sessions._reset_for_test()
+  end)
+end)
+
+test("command completion remains scoped to configured Agent names", function()
+  with_launch_command_store({ "tool --from-store" }, function()
+    agents.setup({
+      agents = {
+        alpha = { cmd = "alpha" },
+        claude = false,
+        codex = false,
+      },
+    })
+
+    eq(commands.complete("t", "Agents launch t"), {})
+    eq(commands.complete("a", "Agents launch a"), { "alpha" })
+  end)
+end)
+
+test("Launch Command smoke tests report pass and failure without opening sessions", function()
+  with_launch_command_store({
+    "sh -c 'printf ok'",
+    "sh -c 'sleep 5'",
+    "sh -c 'test -t 0'",
+    "sh -c 'exit 9'",
+    "missing-agents-nvim-bin",
+  }, function()
+    agents.setup({
+      agents = {
+        alpha = { cmd = "sh", args = { "-c", "exit 0" } },
+        claude = false,
+        codex = false,
+      },
+    })
+
+    local old_task_open = task_editor.open
+    local old_sessions_start = sessions.start
+    task_editor.open = function()
+      error("smoke test should not open the task editor")
+    end
+    sessions.start = function()
+      error("smoke test should not start an Agent Session")
+    end
+
+    local function restore()
+      task_editor.open = old_task_open
+      sessions.start = old_sessions_start
+    end
+
+    local success, err = pcall(function()
+      local active_picker = agents.launch(nil, { target = basic_target() })
+      local function assert_picker_current()
+        ok(vim.api.nvim_win_is_valid(active_picker.winid), "picker window should remain valid")
+        ok(vim.api.nvim_buf_is_valid(active_picker.bufnr), "picker buffer should remain valid")
+        eq(vim.api.nvim_get_current_win(), active_picker.winid, "picker window should remain current")
+        eq(vim.api.nvim_win_get_buf(active_picker.winid), active_picker.bufnr, "picker buffer should remain visible")
+      end
+
+      local notifications = capture_notifications(function(items)
+        vim.api.nvim_set_current_win(active_picker.winid)
+
+        vim.api.nvim_win_set_cursor(active_picker.winid, { 1, 0 })
+        ok(active_picker.test(), "configured Agent smoke test should pass")
+        assert_picker_current()
+
+        vim.api.nvim_win_set_cursor(active_picker.winid, { 2, 0 })
+        ok(active_picker.test(), "quick exit 0 should pass")
+        assert_picker_current()
+
+        vim.api.nvim_win_set_cursor(active_picker.winid, { 3, 0 })
+        ok(active_picker.test(), "long-running command should pass")
+        assert_picker_current()
+
+        vim.api.nvim_win_set_cursor(active_picker.winid, { 4, 0 })
+        ok(active_picker.test(), "TTY-sensitive command should pass")
+        assert_picker_current()
+
+        vim.api.nvim_win_set_cursor(active_picker.winid, { 5, 0 })
+        ok(not active_picker.test(), "nonzero command should fail")
+        assert_picker_current()
+
+        vim.api.nvim_win_set_cursor(active_picker.winid, { 6, 0 })
+        ok(not active_picker.test(), "missing executable should fail")
+        assert_picker_current()
+
+        active_picker.add()
+        set_picker_line_and_leave_insert(active_picker, 7, 'sh -c "unterminated')
+        vim.api.nvim_win_set_cursor(active_picker.winid, { 7, 0 })
+        ok(not active_picker.test(), "parse error should fail")
+        assert_picker_current()
+
+        ok(#items >= 7, "smoke tests should report notifications")
+      end)
+
+      ok(notifications[1].message:find("passed", 1, true), "Agent smoke test should report pass")
+      ok(notifications[2].message:find("passed", 1, true), "quick command should report pass")
+      ok(notifications[3].message:find("passed", 1, true), "long command should report pass")
+      ok(notifications[4].message:find("passed", 1, true), "TTY-sensitive command should report pass")
+      ok(notifications[5].message:find("failed", 1, true), "nonzero command should report failure")
+      ok(notifications[6].message:find("failed", 1, true), "missing executable should report failure")
+      ok(notifications[#notifications].message:find("Unclosed quote", 1, true), "parse error should be reported")
+      active_picker.close()
+    end)
+
+    restore()
+    if not success then
+      error(err, 0)
+    end
+  end)
 end)
 
 test("notifies when a hidden session exits", function()
